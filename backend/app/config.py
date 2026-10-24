@@ -45,6 +45,13 @@ class Settings:
     twilio_auth_token: str = _clean(os.getenv("TWILIO_AUTH_TOKEN"))
     twilio_from_number: str = _clean(os.getenv("TWILIO_FROM_NUMBER"))
 
+    # --- SpacetimeDB (authoritative real-time coordination backend) ---
+    spacetimedb_host: str = _clean(os.getenv("SPACETIMEDB_HOST")) or "http://127.0.0.1:3000"
+    spacetimedb_db: str = _clean(os.getenv("SPACETIMEDB_DB")) or "stillhere"
+    spacetimedb_token: str = _clean(os.getenv("SPACETIMEDB_TOKEN"))
+    # Opt out of the local CLI-token dev fallback (set to "0" to forbid it).
+    spacetimedb_allow_cli_token: bool = _clean(os.getenv("SPACETIMEDB_ALLOW_CLI_TOKEN")) != "0"
+
     db_path: Path = Path(_clean(os.getenv("DB_PATH")) or (REPO_ROOT / "stillhere.db"))
 
     # --- Safety rails (server-enforced, never model-controlled) ---
@@ -74,6 +81,40 @@ class Settings:
         """'cartesia_pstn' = real phone call. 'simulated' = scripted local adapter."""
         return "cartesia_pstn" if self.cartesia_call_ready else "simulated"
 
+    # ------------------------------------------------------------------
+    # Honest mode reporting. Each of the three answers one question:
+    #   voice_mode        - is the phone call real?
+    #   coordination_mode - is shared state really in SpacetimeDB?
+    #   conversation_mode - is the dialogue really driven by Claude?
+    # Nothing in the UI or docs may claim a capability these deny.
+    # ------------------------------------------------------------------
+    def spacetimedb_reachable(self) -> bool:
+        """Live probe. Cheap, and never raises."""
+        try:
+            from .adapters import spacetimedb_adapter as stdb
+        except Exception:
+            return False
+        try:
+            return bool(stdb.health().get("reachable"))
+        except Exception:
+            return False
+
+    def coordination_mode(self) -> str:
+        """'spacetimedb' when the module is reachable, else 'sqlite_fallback'."""
+        return "spacetimedb" if self.spacetimedb_reachable() else "sqlite_fallback"
+
+    def conversation_mode(self) -> str:
+        """'claude' when the fluid engine can reach Claude, else 'keyword_fallback'."""
+        try:
+            from .agents import conversation
+        except Exception:
+            # Engine not present yet; fall back to the key as the best signal.
+            return "claude" if self.anthropic_configured else "keyword_fallback"
+        try:
+            return conversation.conversation_mode()
+        except Exception:
+            return "claude" if self.anthropic_configured else "keyword_fallback"
+
     def redacted(self) -> dict:
         """Safe-to-log capability snapshot. Never contains secret material."""
         return {
@@ -86,6 +127,10 @@ class Settings:
             "anthropic_model": self.anthropic_model if self.anthropic_configured else None,
             "twilio_configured": self.twilio_configured,
             "voice_mode": self.voice_mode(),
+            "coordination_mode": self.coordination_mode(),
+            "conversation_mode": self.conversation_mode(),
+            "spacetimedb_reachable": self.spacetimedb_reachable(),
+            "spacetimedb_db": self.spacetimedb_db,
             "target_phone_present": bool(self.my_phone_e164),
         }
 

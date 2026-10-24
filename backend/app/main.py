@@ -94,19 +94,47 @@ def health():
 def status():
     """Capability snapshot. The UI's honesty banner reads this.
 
-    `voice_mode == 'simulated'` means NO real phone call can be placed.
+    Three independent mode flags, each answering one question truthfully:
+      voice_mode        - is the phone call real?
+      coordination_mode - is shared state really in SpacetimeDB?
+      conversation_mode - is the dialogue really driven by Claude?
     """
     s = get_settings()
+    snapshot = s.redacted()
+
+    notes: list[str] = []
+    if snapshot["voice_mode"] == "cartesia_pstn":
+        notes.append("Real PSTN calling via Cartesia Managed Agents is configured.")
+    else:
+        notes.append(
+            "No real phone call can be placed. Voice runs in the local simulator. "
+            "Set CARTESIA_API_KEY, CARTESIA_AGENT_ID and CARTESIA_FROM_NUMBER_ID "
+            "to enable real calls."
+        )
+
+    if snapshot["coordination_mode"] == "spacetimedb":
+        notes.append(
+            f"Shared coordination state is authoritative in SpacetimeDB "
+            f"(database {s.spacetimedb_db!r})."
+        )
+    else:
+        notes.append(
+            "SpacetimeDB is NOT reachable; coordination is running on the SQLite "
+            "fallback. Run 'make stdb' to publish the module."
+        )
+
+    if snapshot["conversation_mode"] == "claude":
+        notes.append("Conversation is interpreted by Claude with tool calling.")
+    else:
+        notes.append(
+            "No ANTHROPIC_API_KEY, so conversation runs a labeled deterministic "
+            "fallback rather than Claude interpretation."
+        )
+
     return {
-        **s.redacted(),
+        **snapshot,
         "real_call_possible": s.cartesia_call_ready,
-        "notes": (
-            "Real PSTN calling via Cartesia Managed Agents is configured."
-            if s.cartesia_call_ready
-            else "No real phone call can be placed. Voice runs in the local "
-                 "simulator. Set CARTESIA_API_KEY, CARTESIA_AGENT_ID and "
-                 "CARTESIA_FROM_NUMBER_ID to enable real calls."
-        ),
+        "notes": " ".join(notes),
     }
 
 

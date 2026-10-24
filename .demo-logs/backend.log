@@ -50,3 +50,4 @@ INFO:     127.0.0.1:57451 - "GET /api/events/stream HTTP/1.1" 401 Unauthorized
 INFO:     127.0.0.1:57450 - "GET /api/status HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54929 - "GET /api/status HTTP/1.1" 200 OK
 INFO:     127.0.0.1:54934 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61079 - "GET /health HTTP/1.1" 200 OK

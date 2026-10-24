@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+*.db
+*.sqlite3
+node_modules/
+dist/
+.pytest_cache/
+evidence/*.json
+!evidence/.gitkeep

@@ -1,0 +1,11 @@
+fastapi>=0.162
+uvicorn[standard]>=0.54
+pydantic>=2.14
+httpx>=0.28
+python-dotenv>=1.2
+pytest>=9
+pytest-asyncio>=1.4
+anthropic>=2.3
+cartesia>=4.2
+sse-starlette>=3.5
+qrcode[pil]>=8.2

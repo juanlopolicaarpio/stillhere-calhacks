@@ -157,16 +157,26 @@ def seed(*, reset_version: int = 1) -> dict[str, Any]:
         )
 
     # --- availability: Sam & Josh overlap Saturday evening; Maya does not ---
+    # Seed MANY weekends ahead, not just the next one. With a single weekend,
+    # advancing the simulated clock past it leaves every free window in the
+    # past, `find_free_slots` returns nothing, and the system can never act -
+    # which looks like a detector bug but is really a seeding artefact.
+    WEEKS_AHEAD = 16
     sat = _next_weekday(5, 17)      # Saturday 17:00
-    sun = _next_weekday(6, 11)      # Sunday 11:00 (supports the "Sunday instead" branch)
-    for uid in (SAM, JOSH):
-        scheduling.add_availability(uid, sat.isoformat(), (sat + timedelta(hours=6)).isoformat())
-        scheduling.add_availability(uid, sun.isoformat(), (sun + timedelta(hours=8)).isoformat())
-    scheduling.add_availability(
-        MAYA,
-        (sat + timedelta(days=3)).isoformat(),
-        (sat + timedelta(days=3, hours=2)).isoformat(),
-    )
+    sun = _next_weekday(6, 11)      # Sunday 11:00 (supports "Sunday instead")
+    for week in range(WEEKS_AHEAD):
+        sat_n = sat + timedelta(weeks=week)
+        sun_n = sun + timedelta(weeks=week)
+        for uid in (SAM, JOSH):
+            scheduling.add_availability(uid, sat_n.isoformat(),
+                                        (sat_n + timedelta(hours=6)).isoformat())
+            scheduling.add_availability(uid, sun_n.isoformat(),
+                                        (sun_n + timedelta(hours=8)).isoformat())
+        # Maya is free midweek only, so she never collides with Josh's weekend
+        # slots - that is what makes the consent and scheduling tests distinct.
+        mid = sat_n + timedelta(days=3)
+        scheduling.add_availability(MAYA, mid.isoformat(),
+                                    (mid + timedelta(hours=2)).isoformat())
 
     # Real contact history, so `baseline`/`opportunity` compute from data
     # instead of a hardcoded story. Josh comes out dormant (long gap against a

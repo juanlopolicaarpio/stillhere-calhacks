@@ -123,7 +123,9 @@ def main() -> int:
         rr = f"{ratio:.2f}x" if ratio is not None else "-"
 
         if top["suppressed"]:
-            state = warn("held back") + dim(f"  {top.get('suppressed_reason','')[:34]}")
+            why = (top.get("suppressed_reason") or
+                   top.get("below_floor_reason") or "holding back")
+            state = warn("held back") + dim(f"  {why[:34]}")
         elif top["score"] and top["score"] > 0:
             state = hi(f"score {top['score']:.2f}")
         else:
@@ -144,7 +146,7 @@ def main() -> int:
             print("  " + ok("=" * 68))
             print("  " + ok(f"DAY {day}: Still Here decided to reach out, on its own."))
             print(f"    to     : {a.get('display_name') or a.get('contact_id')}")
-            print(f"    because: {a.get('reason','')[:100]}")
+            print(f"    because: {(a.get('reason') or '')[:100]}")
             if live and a.get("provider_call_id"):
                 print("    " + ok(f"REAL CALL PLACED: {a['provider_call_id']}"))
                 print("    your phone should be ringing")

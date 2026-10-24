@@ -130,6 +130,12 @@ class Opportunity:
     baseline: Baseline
     shared_free_slots: list[dict[str, str]]
     suppressed_reason: str | None
+    #: Set when the relationship is simply running at its normal cadence.
+    #: Distinct from `suppressed_reason`, which means "we are deliberately
+    #: backing off after a decline or an unanswered call". One is restraint,
+    #: the other is nothing to say; the dashboard shows them differently and
+    #: only cooling-off has a release date.
+    below_floor_reason: str | None = None
 
     # --- supporting detail (beyond the §2 minimum) -----------------------
     display_name: str = ""
@@ -139,6 +145,29 @@ class Opportunity:
     supporting_memory_count: int = 0
     supporting_memories: list[str] = field(default_factory=list)
     detected_at: str = ""
+
+    @property
+    def should_raise(self) -> bool:
+        """Worth saying something about: not backing off, and genuinely off
+        its own cadence.
+
+        Distinct from the pre-existing `actionable`, which additionally
+        requires shared free time. Kept separate because "nothing has drifted"
+        and "they have no overlapping free time this week" are different
+        answers and the dashboard should not conflate them.
+        """
+        return self.suppressed_reason is None and self.below_floor_reason is None
+
+    @property
+    def hold_reason(self) -> str | None:
+        """Why nothing is being raised, whichever reason applies."""
+        if self.suppressed_reason:
+            return self.suppressed_reason
+        if self.below_floor_reason:
+            return self.below_floor_reason
+        if not self.shared_free_slots:
+            return "no overlapping free time in the scheduling window"
+        return None
 
     @property
     def suppressed(self) -> bool:
@@ -526,11 +555,14 @@ def detect(patient_id: str, *, now: datetime | None = None) -> list[Opportunity]
         # Written in this order on purpose: there is no arithmetic path by
         # which a decline can contribute positively to a score.
         score = score_baseline(bl, has_shared_time=bool(slots))
-        if suppressed_reason is None:
-            # An on-cadence friendship is not an opportunity. Applied HERE, not
-            # in best(), because scheduler.tick() reads detect() directly - a
-            # gate that only one caller honours is not a gate.
-            suppressed_reason = _below_deviation_floor(bl)
+        # Computed independently of cooling-off: a relationship can be both
+        # inside a cooling-off window AND on-cadence, and the two release on
+        # completely different conditions.
+        below_floor = _below_deviation_floor(bl)
+        # Only cooling-off zeroes the score. The floor is a GATE, not a score
+        # mutation: a 1.2x deviation really is 1.2x, and reporting it as 0.0
+        # would both discard honest information and break the ordering that
+        # puts genuinely-paused contacts last.
         if suppressed_reason is not None:
             score = 0.0
 
@@ -552,6 +584,7 @@ def detect(patient_id: str, *, now: datetime | None = None) -> list[Opportunity]
                 baseline=bl,
                 shared_free_slots=slots,
                 suppressed_reason=suppressed_reason,
+                below_floor_reason=below_floor,
                 display_name=display_name,
                 relationship_label=label,
                 suppressed_until=until,
@@ -580,9 +613,10 @@ def best(
     right now" is a correct, and frequently the kindest, answer.
     """
     for o in detect(patient_id, now=now):
-        # detect() already applies the deviation floor as a suppression, so
-        # checking `suppressed` covers both cooling-off and on-cadence.
-        if o.suppressed or o.score < min_score:
+        # should_raise covers cooling-off AND the on-cadence floor; the
+        # original `actionable` additionally requires shared free time, which
+        # a plan obviously needs.
+        if not o.should_raise or not o.actionable or o.score < min_score:
             continue
         return o
     return None

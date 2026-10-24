@@ -127,22 +127,22 @@ def tick(*, dry_run: bool = False, force_mode: str | None = None) -> TickResult:
         # decision through it stops the scheduler from acting on a marginal
         # opportunity the planner would have declined.
         found = opportunity.detect(patient_id)
-        live = [o for o in found if not o.suppressed]
+        live = [o for o in found if o.should_raise and o.actionable]
         result.opportunities_found += len(live)
         result.suppressed += len(found) - len(live)
         worth_raising = opportunity.best(patient_id)
 
         for o in found:
-            if o.suppressed:
+            if not (o.should_raise and o.actionable):
                 # Record the restraint. "We deliberately did nothing, and here
                 # is why" is the most important thing this system can log.
                 events.emit(
                     "scheduler.suppressed",
                     f"Held back on {o.display_name or o.contact_id}: "
-                    f"{o.suppressed_reason}",
+                    f"{o.hold_reason}",
                     payload={
                         "contact_id": o.contact_id,
-                        "reason": o.suppressed_reason,
+                        "reason": o.hold_reason,
                         "until": o.suppressed_until,
                     },
                     simulated=state.simulated,

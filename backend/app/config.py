@@ -64,10 +64,60 @@ class Settings:
     def cartesia_configured(self) -> bool:
         return bool(self.cartesia_api_key)
 
+    # Cartesia id prefixes, observed from the live API on 2026-10-24:
+    #   agents        -> "agent_..."   (e.g. agent_U98T2zA1V78hoipoh1xQAu)
+    #   phone numbers -> "ap_..."      (e.g. ap_s462qHtr163qSGDpyMcC1w)
+    # Pasting one where the other belongs - or pasting a voice UUID - is the
+    # single most common setup mistake, and it is invisible until a call 404s.
+    _AGENT_ID_PREFIX = "agent_"
+    _NUMBER_ID_PREFIX = "ap_"
+
+    def cartesia_id_problems(self) -> list[str]:
+        """Format problems with the configured Cartesia ids, as plain messages.
+
+        A format check, not a liveness check: it cannot tell whether the agent
+        exists on the account (run `make preflight` for that), but it reliably
+        catches a mis-pasted id without a network round-trip.
+        """
+        problems: list[str] = []
+        a, n = self.cartesia_agent_id, self.cartesia_from_number_id
+        if a and not a.startswith(self._AGENT_ID_PREFIX):
+            if a.startswith(self._NUMBER_ID_PREFIX):
+                problems.append(
+                    f"CARTESIA_AGENT_ID looks like a PHONE NUMBER id ({a!r}); "
+                    "agent ids start with 'agent_'."
+                )
+            elif len(a) == 36 and a.count("-") == 4:
+                problems.append(
+                    f"CARTESIA_AGENT_ID looks like a VOICE uuid ({a!r}); "
+                    "agent ids start with 'agent_'."
+                )
+            else:
+                problems.append(
+                    f"CARTESIA_AGENT_ID={a!r} is not an agent id (must start with 'agent_')."
+                )
+        if n and not n.startswith(self._NUMBER_ID_PREFIX):
+            problems.append(
+                f"CARTESIA_FROM_NUMBER_ID={n!r} is not a phone-number id "
+                "(must start with 'ap_')."
+            )
+        return problems
+
     @property
     def cartesia_call_ready(self) -> bool:
-        """True only when a REAL outbound PSTN call is actually possible."""
-        return bool(self.cartesia_api_key and self.cartesia_agent_id and self.cartesia_from_number_id)
+        """True only when a REAL outbound PSTN call is plausibly possible.
+
+        Requires a key, both ids, AND well-formed ids. Without the format check
+        `voice_mode()` reported 'cartesia_pstn' for a mis-pasted id, so the UI
+        claimed real calling worked while every call 404'd. Liveness still
+        needs `make preflight`.
+        """
+        return bool(
+            self.cartesia_api_key
+            and self.cartesia_agent_id
+            and self.cartesia_from_number_id
+            and not self.cartesia_id_problems()
+        )
 
     @property
     def anthropic_configured(self) -> bool:

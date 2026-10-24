@@ -17,7 +17,7 @@ from ..domain.state_machine import (
     assert_transition,
     evaluate_confirmation,
 )
-from . import events
+from . import coordination, events
 
 
 class PlanError(Exception):
@@ -67,6 +67,17 @@ def create_plan(
             "rationale": rationale,
             "memory_citations": memory_citations or [],
         },
+    )
+
+    # Mirror into the authoritative coordination store. Sanitized refs only -
+    # these ids, not names, phone numbers or transcripts.
+    sid = session_id or f"sess_for_{pid}"
+    coordination.start_session(sid, patient_id, contact_id, "simulated")
+    coordination.propose(
+        coordination.proposal_ref(pid, 1), sid, 1,
+        activity=activity, location=location, starts_at=starts_at,
+        why_contact=why_contact or "", why_activity=why_activity or "",
+        memory_citations=memory_citations or [],
     )
     return get_plan(pid)
 
@@ -161,6 +172,18 @@ def record_response(
     )
 
     role = part["role"]
+
+    # Mirror the response against the SPECIFIC plan version, so a stale
+    # approval cannot survive a later revision.
+    coordination.respond(
+        new_id("resp"),
+        coordination.proposal_ref(plan_id, int(plan["version"])),
+        int(plan["version"]),
+        role=role, response=response,
+        agreed_activity=agreed_activity, agreed_starts_at=agreed_start,
+        simulated=simulated,
+    )
+
     events.emit(
         "friend.responded" if role == "contact" else "patient.responded",
         f"{role} responded: {response}",
@@ -215,6 +238,16 @@ def counterpropose(
         " responded_starts_at=NULL, response_at=NULL WHERE plan_id=?",
         (plan_id,),
     )
+    coordination.propose(
+        coordination.proposal_ref(plan_id, int(plan["version"]) + 1),
+        session_id or f"sess_for_{plan_id}", int(plan["version"]) + 1,
+        activity=new_activity, location=plan["location"], starts_at=new_start,
+        why_contact=plan.get("why_contact") or "",
+        why_activity=plan.get("why_activity") or "",
+        memory_citations=plan.get("memory_citations") or [],
+        supersedes_version=int(plan["version"]),
+    )
+
     events.emit(
         "plan.candidate_created",
         f"Counterproposal accepted into plan v{plan['version'] + 1}: "
@@ -272,6 +305,29 @@ def confirm_plan(
         # obtaining the missing approval.
         return out
 
+    # SpacetimeDB is authoritative. The local gate above and the reducer enforce
+    # the same rule; if the reducer refuses, we do NOT confirm locally, so there
+    # is no second path to a confirmed plan. When the module is unreachable the
+    # local gate stands alone and `/api/status` reports `sqlite_fallback`.
+    coord = coordination.confirm(
+        coordination.proposal_ref(plan_id, int(plan["version"])),
+        int(plan["version"]),
+        idempotency_key,
+    )
+    if coord.rejected:
+        events.emit(
+            "plan.rejected",
+            f"Confirmation refused by SpacetimeDB: {coord.reason}",
+            plan_id=plan_id,
+            session_id=session_id,
+            payload={"reason": coord.reason, "authority": "spacetimedb"},
+        )
+        return {
+            "confirmed": False,
+            "reason": f"spacetimedb refused: {coord.reason}",
+            "plan": plan,
+        }
+
     ts = now_iso()
     ex(
         "UPDATE plans SET status=?, confirmed_at=?, idempotency_key=?, updated_at=?"
@@ -292,7 +348,14 @@ def confirm_plan(
         },
     )
 
-    out = {"confirmed": True, "reason": decision.reason, "plan": confirmed}
+    out = {
+        "confirmed": True,
+        "reason": decision.reason,
+        "plan": confirmed,
+        # Which store actually authorized this. The dashboard surfaces it, so a
+        # judge can see whether the reducer or the local fallback was the gate.
+        "authority": "spacetimedb" if coord.applied else "sqlite_fallback",
+    }
     ex(
         "INSERT INTO idempotency (key, scope, result, created_at) VALUES (?,?,?,?)",
         (idempotency_key, "confirm_plan", json.dumps(out), ts),
@@ -373,6 +436,7 @@ def halt_for_revoked_consent(
         session_id=session_id,
         payload={"reason": reason},
     )
+    coordination.revoke(session_id or f"sess_for_{plan_id}", reason)
     return set_state(
         plan_id, PlanState.HALTED_CONSENT_REVOKED, reason=reason, session_id=session_id
     )

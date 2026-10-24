@@ -103,8 +103,14 @@ def status():
     snapshot = s.redacted()
 
     notes: list[str] = []
+    id_problems = s.cartesia_id_problems()
     if snapshot["voice_mode"] == "cartesia_pstn":
-        notes.append("Real PSTN calling via Cartesia Managed Agents is configured.")
+        notes.append(
+            "Real PSTN calling via Cartesia Managed Agents is configured "
+            "(run `make preflight` to confirm the agent exists on the account)."
+        )
+    elif id_problems:
+        notes.append("Cartesia is misconfigured: " + " ".join(id_problems))
     else:
         notes.append(
             "No real phone call can be placed. Voice runs in the local simulator. "

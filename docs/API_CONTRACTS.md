@@ -3,7 +3,7 @@
 **Generated from the live FastAPI OpenAPI schema** by
 `scripts/gen_api_contracts.py`. Do not hand-edit — re-run the generator.
 
-- Generated: 2026-10-24
+- Generated: 2026-10-25
 - App version: 1.0.0
 - Routes documented: 35
 

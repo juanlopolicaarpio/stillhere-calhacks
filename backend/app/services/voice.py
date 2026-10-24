@@ -13,7 +13,7 @@ The context handed to the provider comes exclusively from
 from __future__ import annotations
 
 import json
-import re
+
 from typing import Any
 
 from ..adapters import cartesia_adapter as ca
@@ -290,53 +290,31 @@ def _open_simulated(
     }
 
 
-_YES = re.compile(r"\b(yes|yeah|yep|sure|sounds good|i'?m in|let'?s do it|okay|ok|down)\b", re.I)
-_NO = re.compile(r"\b(no|nope|can'?t|cannot|busy|not this week|pass|rather not)\b", re.I)
-_WEEKDAY_RE = re.compile(
-    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I
-)
-
-
-def _requested_weekday(text: str, current_start: str) -> tuple[str, int] | None:
-    """Detect a contact naming a different day than the one proposed.
-
-    Returns (day_name, weekday_index), or None when no day is named or the day
-    named is the one already proposed.
-    """
-    m = _WEEKDAY_RE.search(text or "")
-    if not m:
-        return None
-    name = m.group(1).lower()
-    weekday = scheduling.WEEKDAYS[name]
-    try:
-        from datetime import datetime
-
-        if datetime.fromisoformat(current_start).weekday() == weekday:
-            return None  # they are agreeing to the proposed day, not changing it
-    except (TypeError, ValueError):
-        pass
-    return name, weekday
-_COFFEE = re.compile(r"\bcoffee\b", re.I)
-_WHO = re.compile(r"\b(who are you|what is this|who is this|are you a (bot|robot|real))\b", re.I)
-_WHY = re.compile(r"\bwhy (marvel|that|this)\b", re.I)
-_HOWIS = re.compile(r"\bhow (is|'?s) \w+ (doing|been)\b", re.I)
-_BOOK_WITHOUT = re.compile(r"\b(just book|book it|don'?t ask|without asking)\b", re.I)
-_INTERRUPT = re.compile(r"\b(wait|hold on|hang on|stop)\b", re.I)
-
-
 def simulate_turn(call_id: str, text: str) -> dict[str, Any]:
-    """Handle one simulated conversational turn.
+    """Handle one conversational turn.
 
-    This mirrors the branch logic the Managed Agent prompt implements over the
-    real phone, so the same end-to-end state changes are exercised in tests.
+    Interpretation is delegated to `agents.conversation.interpret_turn()`, which
+    uses Claude with tools when a key is configured and a labelled deterministic
+    classifier otherwise. THIS function owns everything authoritative: it maps
+    the returned intent onto real state transitions.
+
+    That split is the whole safety design. The model decides what the caller
+    *meant*; this code decides what the system is allowed to *do*. The model
+    cannot record an approval, confirm a plan, or dial anyone - it has no tool
+    for any of those (see `agents.tools.MODEL_FORBIDDEN_TOOLS`).
+
+    Mirrors the branch behaviour the Managed Agent prompt implements over a real
+    phone, so the same state changes are exercised in tests and in the simulator.
     """
+    from ..agents import conversation
+
     call = q1("SELECT * FROM calls WHERE id=?", (call_id,))
     if call is None:
         raise VoiceError(f"unknown call {call_id!r}")
     plan_id = call["plan_id"]
     session_id = call["session_id"]
-    plan = plans.get_plan(plan_id)
     contact_id = call["contact_id"]
+    plan = plans.get_plan(plan_id)
 
     events.emit(
         "call.turn", f"contact: {text}",
@@ -344,184 +322,181 @@ def simulate_turn(call_id: str, text: str) -> dict[str, Any]:
         payload={"speaker": "contact", "text": text}, simulated=True,
     )
 
-    reply: str
-    tool_calls: list[str] = []
+    result = conversation.interpret_turn(
+        text,
+        call_id=call_id,
+        conversation=conversation.history_for_call(call_id),
+        context=conversation.context_for_call(call_id),
+    )
+    intent = result.intent
+    slots = result.slots or {}
 
-    if _WHO.search(text):
-        reply = (
-            "Fair question - I'm an AI assistant called Still Here, not a person. "
-            "Sam set me up to help him make plans, and nothing gets confirmed "
-            "without his say-so. Want me to keep going?"
-        )
+    events.emit(
+        "conversation.interpreted",
+        f"intent={intent} ({result.mode})",
+        plan_id=plan_id, call_id=call_id, session_id=session_id,
+        payload={
+            "intent": intent,
+            "slots": slots,
+            "mode": result.mode,
+            "tools": result.tool_names,
+            "needs_clarification": result.needs_clarification,
+        },
+        simulated=True,
+    )
 
-    elif _BOOK_WITHOUT.search(text):
-        reply = (
-            "I can't do that one - I won't lock anything in without Sam approving it "
-            "first. I can hold this time and check with him right now, though."
-        )
-        events.emit(
-            "safety.blocked",
-            "Refused request to confirm without patient approval",
-            plan_id=plan_id, call_id=call_id, session_id=session_id,
-            payload={"request": "book without asking Sam"}, simulated=True,
-        )
+    def _present(activity: str | None) -> str | None:
+        """Tidy a spoken activity phrase for display.
 
-    elif _HOWIS.search(text):
-        reply = (
-            "That's really his to share, so I'll let him tell you himself. "
-            "What I can say is he's been thinking about you. Should I set this up?"
-        )
-        events.emit(
-            "safety.blocked",
-            "Declined to disclose patient health information to contact",
-            plan_id=plan_id, call_id=call_id, session_id=session_id,
-            payload={"question": "how is Sam doing"}, simulated=True,
-        )
+        The engine extracts activities from natural speech, so it yields
+        "coffee" where a plan label should read "Coffee" - this string is shown
+        on the dashboard and in the confirmation message. Leading articles are
+        preserved ("a Marvel movie") since they read correctly in a sentence.
+        """
+        if not activity:
+            return activity
+        a = activity.strip()
+        if not a or a.split()[0].lower() in {"a", "an", "the"}:
+            return a
+        return a[0].upper() + a[1:]
 
-    elif _WHY.search(text):
-        ctx = memory.shareable_context(plan["patient_id"], contact_id, [])
-        why = ctx["shared_interests"][0] if ctx["shared_interests"] else "something you both enjoy"
-        reply = f"Because of this, from an earlier conversation with Sam: {why}"
-        tool_calls.append("get_support_context")
-
-    elif _COFFEE.search(text):
-        from .scheduling import lookup_showtimes
-
-        lookup_showtimes("coffee")
-        tool_calls.append("lookup_showtimes")
+    def _revise(activity=None, starts_at=None, reason="contact proposed different terms"):
+        """Record a counterproposal, re-plan, and stay on the call."""
+        activity = _present(activity)
         plans.record_response(
             plan_id, contact_id, "counterproposed",
-            activity="Coffee", simulated=True, session_id=session_id,
+            activity=activity, starts_at=starts_at,
+            simulated=True, session_id=session_id,
         )
-        plans.set_state(
-            plan_id, PlanState.FRIEND_COUNTERPROPOSED,
-            reason="contact suggested coffee instead", session_id=session_id, simulated=True,
+        plans.set_state(plan_id, PlanState.FRIEND_COUNTERPROPOSED,
+                        reason=reason, session_id=session_id, simulated=True)
+        plans.counterpropose(plan_id, activity=activity, starts_at=starts_at,
+                             session_id=session_id)
+        events.emit(
+            "approval.invalidated",
+            "Terms changed, so prior approvals were cleared",
+            plan_id=plan_id, call_id=call_id, session_id=session_id,
+            payload={"activity": activity, "starts_at": starts_at}, simulated=True,
         )
-        plans.counterpropose(plan_id, activity="Coffee", session_id=session_id)
-        plans.set_state(
-            plan_id, PlanState.CANDIDATE_PLAN_CREATED,
-            reason="re-planned around coffee", session_id=session_id, simulated=True,
-        )
-        # The call is still live, so return to CONTACT_IN_PROGRESS - otherwise a
-        # following "yes" would be an illegal transition.
-        plans.set_state(
-            plan_id, PlanState.CONTACT_IN_PROGRESS,
-            reason="still on the call with the new terms",
-            session_id=session_id, simulated=True,
-        )
-        reply = (
-            "Coffee works just as well - I'll swap it. Same day still good? "
-            "I'll run it past Sam before anything's final."
-        )
+        plans.set_state(plan_id, PlanState.CANDIDATE_PLAN_CREATED,
+                        reason="re-planned on counterproposal",
+                        session_id=session_id, simulated=True)
+        # Still mid-call, so a following "yes" remains a legal transition.
+        plans.set_state(plan_id, PlanState.CONTACT_IN_PROGRESS,
+                        reason="still on the call with the new terms",
+                        session_id=session_id, simulated=True)
 
-    elif (_day := _requested_weekday(text, plan["starts_at"])) is not None:
-        day_name, weekday = _day
-        new_start = scheduling.find_slot_on_weekday(
-            [plan["patient_id"], contact_id], weekday,
-            exclude_start=plan["starts_at"],
-        )
-        if new_start is None:
-            # Be honest rather than proposing a time that cannot work.
-            reply = (
-                f"{day_name.capitalize()} doesn't look like it works on Sam's side. "
-                f"Would {_humanize(plan['starts_at'])} still be okay, or is there "
-                "another day that's better for you?"
-            )
-            events.emit(
-                "call.turn", f"agent: {reply}",
-                plan_id=plan_id, call_id=call_id, session_id=session_id,
-                payload={"speaker": "agent", "text": reply,
-                         "note": f"no shared availability on {day_name}"},
-                simulated=True,
-            )
-            return {
-                "reply": reply, "tool_calls": ["find_free_slots"],
-                "state": plans.get_plan(plan_id)["status"], "simulated": True,
-            }
-
-        plans.record_response(
-            plan_id, contact_id, "counterproposed",
-            starts_at=new_start, simulated=True, session_id=session_id,
-        )
-        plans.set_state(
-            plan_id, PlanState.FRIEND_COUNTERPROPOSED,
-            reason="contact proposed a different day", session_id=session_id, simulated=True,
-        )
-        plans.counterpropose(plan_id, starts_at=new_start, session_id=session_id)
-        plans.set_state(
-            plan_id, PlanState.CANDIDATE_PLAN_CREATED,
-            reason="re-planned around the new day", session_id=session_id, simulated=True,
-        )
-        # Still mid-call: go back to CONTACT_IN_PROGRESS so a following "yes"
-        # is a legal transition.
-        plans.set_state(
-            plan_id, PlanState.CONTACT_IN_PROGRESS,
-            reason="still on the call with the new terms",
-            session_id=session_id, simulated=True,
-        )
-        reply = (
-            "Sunday's no problem, I'll move it. I'll confirm with Sam and text you "
-            "once he's good with it."
-        )
-
-    elif _NO.search(text) and not _YES.search(text):
-        plans.record_response(
-            plan_id, contact_id, "declined", simulated=True, session_id=session_id
-        )
-        plans.set_state(
-            plan_id, PlanState.FRIEND_DECLINED,
-            reason="contact declined", session_id=session_id, simulated=True,
-        )
-        plans.set_state(
-            plan_id, PlanState.COMPLETE,
-            reason="attempt ended after decline", session_id=session_id, simulated=True,
-        )
-        reply = (
-            "Totally fine, and thanks for being straight with me. No pressure at all - "
-            "I won't keep bugging you. Take care."
-        )
-
-    elif _YES.search(text):
-        plans.record_response(
-            plan_id, contact_id, "accepted", simulated=True, session_id=session_id
-        )
-        plans.set_state(
-            plan_id, PlanState.FRIEND_ACCEPTED,
-            reason="contact accepted", session_id=session_id, simulated=True,
-        )
-        plans.set_state(
-            plan_id, PlanState.PATIENT_APPROVAL_PENDING,
-            reason="awaiting patient approval", session_id=session_id, simulated=True,
-        )
+    if intent == "accept":
+        plans.record_response(plan_id, contact_id, "accepted",
+                              simulated=True, session_id=session_id)
+        plans.set_state(plan_id, PlanState.FRIEND_ACCEPTED,
+                        reason="contact accepted", session_id=session_id, simulated=True)
+        plans.set_state(plan_id, PlanState.PATIENT_APPROVAL_PENDING,
+                        reason="awaiting patient approval",
+                        session_id=session_id, simulated=True)
         events.emit(
             "patient.approval_requested",
             "Asking Sam to approve the plan before anything is final",
             plan_id=plan_id, call_id=call_id, session_id=session_id,
             payload={"activity": plan["activity"], "starts_at": plan["starts_at"]},
         )
-        tool_calls += ["record_friend_response", "request_patient_approval"]
-        reply = (
-            "That's great - I'll check with Sam and confirm. Nothing's locked in "
-            "until he says yes, and then I'll text you both the details."
+
+    elif intent == "decline":
+        plans.record_response(plan_id, contact_id, "declined",
+                              simulated=True, session_id=session_id)
+        plans.set_state(plan_id, PlanState.FRIEND_DECLINED,
+                        reason="contact declined", session_id=session_id, simulated=True)
+        plans.set_state(plan_id, PlanState.COMPLETE,
+                        reason="attempt ended after decline",
+                        session_id=session_id, simulated=True)
+
+    elif intent == "request_stop_contact":
+        # An explicit opt-out outranks everything else in flight.
+        from . import consent as consent_mod
+
+        plans.record_response(plan_id, contact_id, "declined",
+                              simulated=True, session_id=session_id)
+        consent_mod.revoke_consent(plan["patient_id"], contact_id)
+        events.emit(
+            "consent.revoked",
+            "Contact asked not to be called again; consent revoked immediately",
+            plan_id=plan_id, call_id=call_id, session_id=session_id,
+            payload={"contact_id": contact_id, "source": "on_call_request"},
+        )
+        plans.halt_for_revoked_consent(
+            plan_id, "contact requested no further contact", session_id=session_id
         )
 
-    elif _INTERRUPT.search(text):
-        reply = "Of course - go ahead, I'm listening."
+    elif intent in ("counter_time", "counter_activity", "counter_both"):
+        # Agreeing to terms that are ALREADY the plan is acceptance, not a
+        # counterproposal. Claude re-states the agreed terms when the caller
+        # says "yeah, let's do that" right after a revision; treating that as a
+        # fresh counter bumped the version and silently discarded the yes.
+        # Deterministic check, so the model cannot talk its way into either
+        # outcome.
+        want_activity = _present(slots.get("activity")) or plan["activity"]
+        want_start = slots.get("starts_at") or plan["starts_at"]
+        if (
+            want_activity.strip().lower() == plan["activity"].strip().lower()
+            and str(want_start) == str(plan["starts_at"])
+        ):
+            plans.record_response(plan_id, contact_id, "accepted",
+                                  simulated=True, session_id=session_id)
+            plans.set_state(plan_id, PlanState.FRIEND_ACCEPTED,
+                            reason="contact agreed to the current terms",
+                            session_id=session_id, simulated=True)
+            plans.set_state(plan_id, PlanState.PATIENT_APPROVAL_PENDING,
+                            reason="awaiting patient approval",
+                            session_id=session_id, simulated=True)
+            events.emit(
+                "patient.approval_requested",
+                "Asking Sam to approve the plan before anything is final",
+                plan_id=plan_id, call_id=call_id, session_id=session_id,
+                payload={"activity": plan["activity"], "starts_at": plan["starts_at"],
+                         "note": "restated current terms, read as acceptance"},
+            )
+            intent = "accept"
+        else:
+            _revise(
+                activity=slots.get("activity"),
+                starts_at=slots.get("starts_at"),
+                reason=f"contact proposed different terms ({intent})",
+            )
 
-    else:
+    # maybe_defer, ask_*, interrupt, silence, out_of_scope, clarification_needed
+    # and unknown deliberately change NO state. A hedge is not an acceptance.
+
+    reply = result.reply
+    # Final outbound guard: a contact-facing utterance must stay clinically clean.
+    try:
+        memory.assert_no_sensitive_leak(reply)
+    except memory.MemoryError_:
+        events.emit(
+            "safety.blocked",
+            "Replaced a reply that contained sensitive language",
+            plan_id=plan_id, call_id=call_id, session_id=session_id,
+            payload={"intent": intent}, simulated=True,
+        )
         reply = (
-            "I want to make sure I got that right - are you up for it, or would "
-            "another day work better?"
+            "That's really Sam's to share, and he would want to tell you himself. "
+            "Shall I go ahead and set this up?"
         )
 
     events.emit(
         "call.turn", f"agent: {reply}",
         plan_id=plan_id, call_id=call_id, session_id=session_id,
-        payload={"speaker": "agent", "text": reply, "tools": tool_calls}, simulated=True,
+        payload={"speaker": "agent", "text": reply, "intent": intent,
+                 "tools": result.tool_names},
+        simulated=True,
     )
+
     return {
         "reply": reply,
-        "tool_calls": tool_calls,
+        "intent": intent,
+        "slots": slots,
+        "mode": result.mode,
+        "tool_calls": result.tool_names,
+        "needs_clarification": result.needs_clarification,
         "state": plans.get_plan(plan_id)["status"],
         "simulated": True,
     }

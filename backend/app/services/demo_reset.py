@@ -20,6 +20,7 @@ from typing import Any
 from ..config import get_settings
 from ..db import ex, new_id, now_iso, q1, wipe_all
 from . import consent as consent_svc
+from . import baseline as baseline_svc
 from . import events, memory, scheduling
 
 SAM = "user_sam"
@@ -167,6 +168,13 @@ def seed(*, reset_version: int = 1) -> dict[str, Any]:
         (sat + timedelta(days=3, hours=2)).isoformat(),
     )
 
+    # Real contact history, so `baseline`/`opportunity` compute from data
+    # instead of a hardcoded story. Josh comes out dormant (long gap against a
+    # short historical median), Maya recently-in-touch.
+    history = baseline_svc.seed_demo_history_defaults(
+        SAM, dormant_contact_id=JOSH, recent_contact_id=MAYA,
+    )
+
     demo_id = new_id("demo")
     ex(
         "INSERT INTO demo_sessions (id, state, reset_version, started_at) VALUES (?,?,?,?)",
@@ -180,6 +188,7 @@ def seed(*, reset_version: int = 1) -> dict[str, Any]:
         "contacts": {"josh": JOSH, "maya": MAYA, "daniel": DANIEL},
         "josh_phone_is_real": bool(s.my_phone_e164),
         "memories_seeded": len(seeded),
+        "contact_events_seeded": sum(len(v) for v in history.values()),
     }
 
 
@@ -190,6 +199,12 @@ def reset() -> dict[str, Any]:
 
     wipe_all()
     events.reset_sequence()
+    # A reset returns to the real present; otherwise a prior time warp
+    # silently persists into what looks like a fresh demo.
+    from . import clock
+
+    clock.invalidate_cache()
+    clock.reset()
     info = seed(reset_version=version)
 
     events.emit(

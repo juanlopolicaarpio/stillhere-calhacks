@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..config import get_settings
 from ..db import ex, new_id, now_iso, q, q1
+from . import clock
 
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
@@ -107,7 +108,7 @@ def verify_outreach(
     5. not inside quiet hours
     6. under the per-day contact frequency cap
     """
-    now = at or datetime.now(timezone.utc)
+    now = at or clock.now()
 
     patient = q1("SELECT * FROM users WHERE id=?", (patient_id,))
     if patient is None:

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db import ex, new_id, q
+from . import clock
 
 
 @dataclass
@@ -50,7 +51,7 @@ def find_free_slots(
     if not participant_ids:
         return []
 
-    ws = _parse(window_start) if window_start else datetime.now(timezone.utc)
+    ws = _parse(window_start) if window_start else clock.now()
     we = _parse(window_end) if window_end else ws + timedelta(days=14)
 
     per_user: list[list[tuple[datetime, datetime]]] = []

@@ -50,6 +50,7 @@ from typing import Any
 
 from ..adapters import anthropic_adapter as llm
 from ..db import q, q1
+from ..services import clock
 from ..services import consent as consent_svc
 from ..services import events, memory, plans, scheduling
 from . import tools as agent_tools
@@ -995,7 +996,7 @@ def _named_days(text: str) -> list[tuple[str, int]]:
         before = low[max(0, m.start() - 40):m.start()]
         if _BUSY_BEFORE_RE.search(before):
             continue
-        now = datetime.now(timezone.utc)
+        now = clock.now()
         word = m.group(1)
         d = now + timedelta(days=1) if word == "tomorrow" else now
         found.append((word, d.weekday()))
@@ -1399,9 +1400,9 @@ def _ground_time(
         if weekday is None:
             rel = str(slots["day"]).lower()
             if rel in {"today", "tonight"}:
-                weekday = datetime.now(timezone.utc).weekday()
+                weekday = clock.now().weekday()
             elif rel == "tomorrow":
-                weekday = (datetime.now(timezone.utc) + timedelta(days=1)).weekday()
+                weekday = (clock.now() + timedelta(days=1)).weekday()
     lo, hi = flags.get("lo"), flags.get("hi")
     if lo is None and slots.get("time_of_day"):
         label, l2, h2 = _time_of_day(str(slots["time_of_day"]))

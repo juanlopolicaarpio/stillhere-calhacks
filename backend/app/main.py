@@ -137,9 +137,18 @@ def status():
             "fallback rather than Claude interpretation."
         )
 
+    from .services import clock
+
+    cs = clock.offset_state()
+    if cs.simulated:
+        notes.append(cs.note)
+
     return {
         **snapshot,
         "real_call_possible": s.cartesia_call_ready,
+        "simulated_clock": cs.simulated,
+        "clock_offset_days": cs.offset_days,
+        "simulated_now": cs.simulated_now,
         "notes": " ".join(notes),
     }
 
@@ -149,6 +158,7 @@ from .api import companion as companion_api  # noqa: E402
 from .api import demo as demo_api  # noqa: E402
 from .api import events as events_api  # noqa: E402
 from .api import inbound as inbound_api  # noqa: E402
+from .api import simulate as simulate_api  # noqa: E402
 from .api import onboarding as onboarding_api  # noqa: E402
 from .api import voice as voice_api  # noqa: E402
 
@@ -158,4 +168,5 @@ app.include_router(companion_api.router)
 app.include_router(demo_api.router)
 app.include_router(events_api.router)
 app.include_router(inbound_api.router)
+app.include_router(simulate_api.router)
 app.include_router(voice_api.router)

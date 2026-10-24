@@ -52,6 +52,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db import q, q1
+from . import clock
 from . import memory, scheduling
 from .baseline import Baseline, relationship_baseline
 
@@ -105,7 +106,18 @@ SLOT_MIN_MINUTES = 60
 #: reconnection system turns into a nag. 0.25 is reached at roughly 1.5x the
 #: usual gap on a high-confidence baseline with shared free time - i.e. the
 #: `drifting` threshold - so `best()` stays silent while things are fine.
+#: A relationship must be meaningfully OFF its own cadence before Still Here
+#: says anything. Observed 2026-10-25: a contact at a 1.06x deviation - i.e.
+#: exactly on schedule - scored 0.07 and that was enough to trigger an
+#: outreach. Phoning someone because it has been 9 days when they normally
+#: speak every 8.5 is the behaviour that makes a product like this
+#: insufferable, so the floor is set above incidental noise.
 MIN_SCORE_TO_RAISE = 0.25
+
+#: Hard gate in front of the score: below this ratio the relationship is
+#: simply current, whatever the score arithmetic says. Two independent guards,
+#: because being too eager is the failure mode that matters here.
+MIN_DEVIATION_TO_RAISE = 1.6
 
 
 @dataclass
@@ -156,7 +168,7 @@ def _parse(ts: str) -> datetime:
 
 def _utcnow(now: datetime | None = None) -> datetime:
     if now is None:
-        return datetime.now(timezone.utc)
+        return clock.now()
     return now if now.tzinfo else now.replace(tzinfo=timezone.utc)
 
 
@@ -438,6 +450,26 @@ def _reason_sentence(
 # --------------------------------------------------------------------------
 
 
+def _below_deviation_floor(baseline) -> str | None:
+    """Reason this relationship is simply current, or None if it has drifted."""
+    ratio = getattr(baseline, "deviation_ratio", None)
+    if ratio is None:
+        return None
+    if ratio < MIN_DEVIATION_TO_RAISE:
+        median = getattr(baseline, "median_gap_days", None)
+        current = getattr(baseline, "current_gap_days", None)
+        detail = (
+            f" (about {current:.0f} days against a usual {median:.0f})"
+            if current is not None and median is not None else ""
+        )
+        return (
+            f"this friendship is running at its normal cadence{detail}; "
+            f"{ratio:.2f}x is below the {MIN_DEVIATION_TO_RAISE:g}x needed to say "
+            "anything"
+        )
+    return None
+
+
 def detect(patient_id: str, *, now: datetime | None = None) -> list[Opportunity]:
     """Detect reconnection opportunities for one patient.
 
@@ -494,6 +526,11 @@ def detect(patient_id: str, *, now: datetime | None = None) -> list[Opportunity]
         # Written in this order on purpose: there is no arithmetic path by
         # which a decline can contribute positively to a score.
         score = score_baseline(bl, has_shared_time=bool(slots))
+        if suppressed_reason is None:
+            # An on-cadence friendship is not an opportunity. Applied HERE, not
+            # in best(), because scheduler.tick() reads detect() directly - a
+            # gate that only one caller honours is not a gate.
+            suppressed_reason = _below_deviation_floor(bl)
         if suppressed_reason is not None:
             score = 0.0
 
@@ -543,6 +580,9 @@ def best(
     right now" is a correct, and frequently the kindest, answer.
     """
     for o in detect(patient_id, now=now):
-        if not o.suppressed and o.score >= min_score:
-            return o
+        # detect() already applies the deviation floor as a suppression, so
+        # checking `suppressed` covers both cooling-off and on-cadence.
+        if o.suppressed or o.score < min_score:
+            continue
+        return o
     return None

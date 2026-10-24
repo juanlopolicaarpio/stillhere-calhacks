@@ -15,7 +15,7 @@ from typing import Any
 from ..db import new_id, q, q1
 from ..domain.state_machine import PlanState
 from ..services import consent as consent_svc
-from ..services import events, memory, plans, scheduling
+from ..services import events, memory, opportunity, plans, scheduling
 
 
 @dataclass
@@ -220,11 +220,46 @@ def identify_opportunity(
         return {"ok": False, "reason": "no consented contact available", "detail": reasons}
 
     # --- who ---
+    # Prefer the longitudinal detector: it scores against each relationship's
+    # OWN history (median gap, deviation ratio) and enforces the cooling-off
+    # window after a decline or an unanswered call. The memory-overlap scoring
+    # below is the fallback for a patient with too little history to have a
+    # baseline yet.
+    detected = opportunity.best(patient_id)
+    if detected is not None:
+        events.emit(
+            "memory.retrieved",
+            f"Opportunity detected: {detected.display_name} - {detected.reason}",
+            session_id=sid,
+            payload={
+                "source": "longitudinal_baseline",
+                "contact_id": detected.contact_id,
+                "score": round(detected.score, 2),
+                "reason": detected.reason,
+                "median_gap_days": getattr(detected.baseline, "median_gap_days", None),
+                "current_gap_days": getattr(detected.baseline, "current_gap_days", None),
+                "deviation_ratio": getattr(detected.baseline, "deviation_ratio", None),
+                "confidence": getattr(detected.baseline, "confidence", None),
+            },
+        )
+
     scored = []
     for c in allowed:
         s, cites, why = score_contact(patient_id, c["contact_id"])
         scored.append({**c, "score": s, "citations": cites, "why": why})
     scored.sort(key=lambda x: x["score"], reverse=True)
+
+    if detected is not None:
+        match = next(
+            (c for c in scored if c["contact_id"] == detected.contact_id), None
+        )
+        if match is not None:
+            # The detector chose; its reason replaces the overlap heuristic's,
+            # because it cites real numbers from this relationship's history.
+            match = {**match, "why": detected.reason,
+                     "score": max(match["score"], detected.score)}
+            scored = [match] + [c for c in scored if c is not match
+                                and c["contact_id"] != detected.contact_id]
     chosen = scored[0]
 
     if chosen["score"] <= 0:

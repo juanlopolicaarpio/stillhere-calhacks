@@ -21,6 +21,7 @@ from ..adapters import cartesia_adapter as ca
 from ..config import get_settings
 from ..db import ex, new_id, now_iso, q1
 from ..domain.state_machine import PlanState
+from . import clock
 from . import consent as consent_svc
 from . import events, memory, plans, scheduling
 
@@ -79,7 +80,7 @@ def _quiet_gap(patient_id: str, contact_id: str) -> tuple[str, int | None]:
         return "", None
     if then.tzinfo is None:
         then = then.replace(tzinfo=timezone.utc)
-    days = (datetime.now(timezone.utc) - then).days
+    days = (clock.now() - then).days
     if days < 7:
         return "", days          # not a gap worth remarking on
     if days < 14:

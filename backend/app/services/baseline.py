@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Sequence
 
 from ..db import ex, new_id, q, q1
+from . import clock
 
 # --------------------------------------------------------------------------
 # Tunables. All thresholds live here so a reviewer can see every magic number
@@ -134,7 +135,7 @@ def _parse(ts: str) -> datetime:
 
 def _utcnow(now: datetime | None = None) -> datetime:
     if now is None:
-        return datetime.now(timezone.utc)
+        return clock.now()
     return now if now.tzinfo else now.replace(tzinfo=timezone.utc)
 
 

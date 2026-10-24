@@ -43,3 +43,6 @@
 2026-10-24T22:05:35Z INF Registered tunnel connection connIndex=0 connection=a6521f63-6602-4b25-a33b-3be5478416f8 event=0 ip=198.41.200.113 location=sjc11 protocol=quic
 2026-10-24T22:05:39Z ERR Failed to initialize DNS local resolver error="lookup region1.v2.argotunnel.com: i/o timeout"
 2026-10-24T22:10:44Z ERR Failed to refresh DNS local resolver error="lookup region1.v2.argotunnel.com: i/o timeout"
+2026-10-24T22:15:49Z ERR Failed to refresh DNS local resolver error="lookup region1.v2.argotunnel.com: i/o timeout"
+2026-10-24T22:20:54Z ERR Failed to refresh DNS local resolver error="lookup region1.v2.argotunnel.com: i/o timeout"
+2026-10-24T22:25:59Z ERR Failed to refresh DNS local resolver error="lookup region1.v2.argotunnel.com: i/o timeout"

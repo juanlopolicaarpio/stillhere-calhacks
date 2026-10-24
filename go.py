@@ -6,6 +6,7 @@
     python go.py sim          rehearse the conversation in the terminal, no call
     python go.py weeks        watch three weeks pass and see it decide
     python go.py stop         shut it all down
+    python go.py tools        print the ONE manual setup step
     python go.py check        is it ready?
 
 That is the whole operator surface. The ten scripts underneath still exist for
@@ -133,6 +134,13 @@ def cmd_weeks() -> int:
     return run("timewarp.py", *sys.argv[2:])
 
 
+def cmd_tools() -> int:
+    """The one step that cannot be automated: registering webhook tools."""
+    if not everything_up():
+        ensure_up()
+    return run("print_tools.py")
+
+
 def cmd_stop() -> int:
     """Stop the local processes. Leaves data and credentials alone."""
     print(dim("Stopping backend, frontend, tunnel and SpacetimeDB ..."))
@@ -168,6 +176,7 @@ COMMANDS = {
     "call": cmd_call,
     "up": cmd_up,
     "check": cmd_check,
+    "tools": cmd_tools,
     "sim": cmd_sim,
     "weeks": cmd_weeks,
     "stop": cmd_stop,
@@ -183,7 +192,7 @@ def main() -> int:
     if fn is None:
         print(bad(f"Unknown command {arg!r}."))
         print(dim("Try: python go.py            (start everything and call)"))
-        print(dim("     python go.py call | up | sim | weeks | check | stop"))
+        print(dim("     python go.py call | up | sim | weeks | tools | check | stop"))
         return 2
     return fn()
 

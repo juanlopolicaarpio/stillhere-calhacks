@@ -64,7 +64,10 @@ export function Dashboard() {
     (statusResp as { dev_dashboard_token?: string | null } | null)
       ?.dev_dashboard_token ?? null;
   useEffect(() => {
-    if (!token && devToken) {
+    // `!token` also covers a previously-saved EMPTY string, which localStorage
+    // stores as a real value and which otherwise reads as "already chosen" -
+    // that is what left the dashboard stuck on 401 after the first fix.
+    if (devToken && (!token || token.trim() === '')) {
       setToken(devToken);
       setTokenInput(devToken);
     }

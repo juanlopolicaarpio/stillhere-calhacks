@@ -148,6 +148,7 @@ from .api import calendar as calendar_api  # noqa: E402
 from .api import companion as companion_api  # noqa: E402
 from .api import demo as demo_api  # noqa: E402
 from .api import events as events_api  # noqa: E402
+from .api import inbound as inbound_api  # noqa: E402
 from .api import onboarding as onboarding_api  # noqa: E402
 from .api import voice as voice_api  # noqa: E402
 
@@ -156,4 +157,5 @@ app.include_router(calendar_api.router)
 app.include_router(companion_api.router)
 app.include_router(demo_api.router)
 app.include_router(events_api.router)
+app.include_router(inbound_api.router)
 app.include_router(voice_api.router)

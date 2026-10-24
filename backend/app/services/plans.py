@@ -11,11 +11,13 @@ from typing import Any
 
 from ..db import ex, new_id, now_iso, q, q1
 from ..domain.state_machine import (
+    MAX_GROUP_SIZE,
     Approval,
     PlanState,
     TransitionError,
     assert_transition,
     evaluate_confirmation,
+    evaluate_group_confirmation,
 )
 from . import coordination, events
 
@@ -213,6 +215,75 @@ def _approval(plan: dict[str, Any], role: str) -> Approval | None:
     return None
 
 
+def _contact_approvals(plan: dict[str, Any]) -> list[Approval]:
+    """Every participating contact's response, in stable order.
+
+    A group plan has one patient row and N contact rows in
+    `plan_participants`; confirmation requires all of them.
+    """
+    return [
+        Approval(
+            user_id=p["user_id"],
+            response=p["response"],
+            activity=p["responded_activity"],
+            starts_at=p["responded_starts_at"],
+            simulated=bool(p["simulated"]),
+        )
+        for p in sorted(plan["participants"], key=lambda r: r["user_id"])
+        if p["role"] == "contact"
+    ]
+
+
+def add_participant(plan_id: str, contact_id: str, *, session_id: str | None = None) -> dict[str, Any]:
+    """Invite an additional contact to an existing plan.
+
+    Each added contact must independently pass the consent gate - being invited
+    by the patient is not consent from the invitee. Adding anyone clears all
+    existing approvals, because the plan the others agreed to was a different,
+    smaller outing.
+    """
+    from . import consent as consent_svc
+
+    plan = get_plan(plan_id)
+    contacts = [p for p in plan["participants"] if p["role"] == "contact"]
+    if any(p["user_id"] == contact_id for p in contacts):
+        return plan
+    if len(contacts) + 2 > MAX_GROUP_SIZE:
+        raise PlanError(
+            f"group would exceed MAX_GROUP_SIZE={MAX_GROUP_SIZE}"
+        )
+
+    decision = consent_svc.verify_outreach(
+        plan["patient_id"], contact_id, "voice_call", override_quiet_hours=True
+    )
+    if not decision.allowed:
+        events.emit(
+            "consent.denied",
+            f"Cannot add contact to plan: {decision.reason}",
+            plan_id=plan_id, session_id=session_id,
+            payload={"contact_id": contact_id, "reason": decision.reason},
+        )
+        raise PlanError(f"consent denied for added contact: {decision.reason}")
+
+    ex(
+        "INSERT INTO plan_participants (plan_id, user_id, role) VALUES (?,?,'contact')",
+        (plan_id, contact_id),
+    )
+    # A bigger outing is a different outing: nobody has agreed to it yet.
+    ex(
+        "UPDATE plan_participants SET response=NULL, responded_activity=NULL,"
+        " responded_starts_at=NULL, response_at=NULL WHERE plan_id=?",
+        (plan_id,),
+    )
+    events.emit(
+        "approval.invalidated",
+        "Group grew, so prior approvals were cleared",
+        plan_id=plan_id, session_id=session_id,
+        payload={"added_contact": contact_id, "group_size": len(contacts) + 2},
+    )
+    return get_plan(plan_id)
+
+
 def counterpropose(
     plan_id: str,
     *,
@@ -284,10 +355,10 @@ def confirm_plan(
         return json.loads(existing["result"])
 
     plan = get_plan(plan_id)
-    decision = evaluate_confirmation(
+    decision = evaluate_group_confirmation(
         plan["status"],
         _approval(plan, "patient"),
-        _approval(plan, "contact"),
+        _contact_approvals(plan),
         plan["activity"],
         plan["starts_at"],
     )

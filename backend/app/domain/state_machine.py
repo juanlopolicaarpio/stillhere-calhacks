@@ -166,3 +166,92 @@ def evaluate_confirmation(
         )
 
     return ConfirmDecision(True, "both parties approved identical terms", PlanState.PLAN_CONFIRMED)
+
+
+#: Upper bound on participants in one plan (patient + contacts). A group outing
+#: that needs coordinating beyond this stops being low-pressure, which is the
+#: whole point of the product.
+MAX_GROUP_SIZE = 4
+
+
+def evaluate_group_confirmation(
+    current: PlanState | str,
+    patient: Approval | None,
+    contacts: list[Approval],
+    plan_activity: str,
+    plan_starts_at: str,
+) -> ConfirmDecision:
+    """Confirmation gate for a plan with any number of contacts.
+
+    Generalises `evaluate_confirmation`: the patient AND **every** participating
+    contact must have accepted the identical activity and start time on the
+    plan of record. One silent or mismatched contact blocks the whole plan,
+    because confirming an outing that one invitee never agreed to is exactly
+    the failure this gate exists to prevent.
+
+    The 1:1 function remains the single source of truth for the two-party case
+    and is delegated to, so there is one implementation of the core rule.
+    """
+    cur = PlanState(current)
+
+    if cur is PlanState.HALTED_CONSENT_REVOKED:
+        return ConfirmDecision(False, "consent was revoked; workflow halted")
+
+    if not contacts:
+        return ConfirmDecision(False, "plan has no participating contacts")
+
+    if len(contacts) + 1 > MAX_GROUP_SIZE:
+        return ConfirmDecision(
+            False,
+            f"group of {len(contacts) + 1} exceeds MAX_GROUP_SIZE={MAX_GROUP_SIZE}",
+        )
+
+    # Two-party plans take the original path verbatim.
+    if len(contacts) == 1:
+        return evaluate_confirmation(
+            current, patient, contacts[0], plan_activity, plan_starts_at
+        )
+
+    if patient is None:
+        return ConfirmDecision(False, "missing approval from the patient")
+
+    for appr in contacts:
+        if not appr.accepted:
+            # Identify by position, not by name: a decline must not be
+            # broadcast to the other invitees.
+            return ConfirmDecision(
+                False,
+                f"one invitee has not accepted (response={appr.response})",
+            )
+
+    if not patient.accepted:
+        return ConfirmDecision(
+            False, f"patient has not accepted (response={patient.response})"
+        )
+
+    for label, appr in [("patient", patient)] + [
+        ("an invitee", a) for a in contacts
+    ]:
+        if appr.activity != plan_activity:
+            return ConfirmDecision(
+                False,
+                f"{label} approved a different activity "
+                f"({appr.activity!r} != plan {plan_activity!r})",
+            )
+        if appr.starts_at != plan_starts_at:
+            return ConfirmDecision(
+                False,
+                f"{label} approved a different time "
+                f"({appr.starts_at!r} != plan {plan_starts_at!r})",
+            )
+
+    if cur is not PlanState.AVAILABILITY_REVALIDATED:
+        return ConfirmDecision(
+            False, f"availability must be revalidated first (state={cur})"
+        )
+
+    return ConfirmDecision(
+        True,
+        f"patient and all {len(contacts)} invitees approved identical terms",
+        PlanState.PLAN_CONFIRMED,
+    )

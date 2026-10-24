@@ -260,11 +260,11 @@ def start_outbound_call(
     call_id = new_id("call")
 
     ex(
-        "INSERT INTO calls (id, plan_id, contact_id, session_id, provider,"
+        "INSERT INTO calls (id, plan_id, patient_id, contact_id, session_id, provider,"
         " to_number_redacted, status, mode, idempotency_key, requested_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (
-            call_id, plan_id, contact_id, session_id,
+            call_id, plan_id, patient_id, contact_id, session_id,
             "cartesia" if mode == "cartesia_pstn" else "simulated",
             _redact(to_number), "requested", mode, idempotency_key, now_iso(),
         ),

@@ -229,17 +229,20 @@ def suppressing_signals(
             }
         )
 
-    # `calls` has no patient_id column (a call may have no plan behind it), so
-    # this matches on contact_id alone. In a multi-patient database that
-    # OVER-suppresses: an unanswered call to this contact on someone else's
-    # behalf also pauses outreach here. That is the safe direction to be wrong
-    # in, and it is noted in docs/OPPORTUNITY_DETECTION.md.
+    # Scoped to this patient AND contact. `calls.patient_id` was added for
+    # exactly this query (db.py migration): matching on contact_id alone
+    # over-suppressed, because an unanswered call placed on someone else's
+    # behalf would also pause outreach here. Rows predating the column have
+    # patient_id NULL, so they are still honoured for this contact rather than
+    # silently ignored - keeping the conservative behaviour for old data while
+    # new data is scoped correctly.
     placeholders = ",".join("?" for _ in UNANSWERED_CALL_STATUSES)
     statuses = sorted(UNANSWERED_CALL_STATUSES)
     for r in q(
         "SELECT id, status, requested_at, ended_at FROM calls"
-        f" WHERE contact_id=? AND answered_at IS NULL AND status IN ({placeholders})",
-        (contact_id, *statuses),
+        f" WHERE contact_id=? AND (patient_id=? OR patient_id IS NULL)"
+        f" AND answered_at IS NULL AND status IN ({placeholders})",
+        (contact_id, patient_id, *statuses),
     ):
         at = r["ended_at"] or r["requested_at"]
         if not at:

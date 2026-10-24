@@ -200,6 +200,7 @@ CREATE TABLE IF NOT EXISTS plan_participants (
 CREATE TABLE IF NOT EXISTS calls (
   id TEXT PRIMARY KEY,
   plan_id TEXT,
+  patient_id TEXT,
   contact_id TEXT,
   session_id TEXT,
   provider TEXT NOT NULL,
@@ -288,6 +289,9 @@ def init_db() -> None:
     # Additive migrations for databases created by an earlier schema.
     for table, column, decl in (
         ("relationships", "last_contact_at", "TEXT"),
+        # Without this, unanswered-call suppression in services/opportunity.py
+        # could only match on contact_id and over-suppressed across patients.
+        ("calls", "patient_id", "TEXT"),
     ):
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:

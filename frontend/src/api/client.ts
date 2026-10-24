@@ -98,7 +98,34 @@ export type EventType =
   | 'patient.responded'
   | 'notification.sent'
   | 'safety.blocked'
-  | 'error';
+  | 'error'
+  // specs/CONTRACTS_V2.md §6 additions.
+  | 'stdb.reducer_called'
+  | 'stdb.reducer_rejected'
+  | 'stdb.unavailable'
+  | 'conversation.interpreted'
+  | 'conversation.clarification_requested'
+  | 'proposal.revised'
+  | 'approval.invalidated';
+
+/** specs/CONTRACTS_V2.md §5 — stable intent vocabulary for conversation turns. */
+export type ConversationIntent =
+  | 'accept'
+  | 'decline'
+  | 'maybe_defer'
+  | 'counter_time'
+  | 'counter_activity'
+  | 'counter_both'
+  | 'ask_why_activity'
+  | 'ask_about_patient_health'
+  | 'ask_what_patient_likes'
+  | 'ask_add_person'
+  | 'request_stop_contact'
+  | 'interrupt'
+  | 'silence'
+  | 'out_of_scope'
+  | 'clarification_needed'
+  | 'unknown';
 
 // ---------------------------------------------------------------------------
 // 4.1 Public / onboarding
@@ -110,8 +137,31 @@ export interface HealthResponse {
   voice_mode: VoiceMode;
 }
 
+/** specs/CONTRACTS_V2.md §4 degradation policy: 'spacetimedb' only when the
+ * backend's adapter is configured AND reachable; 'sqlite_fallback' otherwise. */
+export type CoordinationMode = 'spacetimedb' | 'sqlite_fallback';
+
+/** specs/CONTRACTS_V2.md §5: 'claude' unless ANTHROPIC_API_KEY is absent. */
+export type ConversationMode = 'claude' | 'keyword_fallback';
+
 export interface StatusResponse {
   voice_mode: VoiceMode;
+  cartesia_configured?: boolean;
+  cartesia_call_ready?: boolean;
+  cartesia_version?: string;
+  cartesia_agent_id_present?: boolean;
+  cartesia_from_number_id_present?: boolean;
+  anthropic_configured?: boolean;
+  anthropic_model?: string;
+  twilio_configured?: boolean;
+  target_phone_present?: boolean;
+  real_call_possible?: boolean;
+  notes?: string;
+  // CONTRACTS_V2.md additions. Agent B/C are wiring these in parallel, so
+  // they must be treated as optional and absent-tolerant everywhere.
+  coordination_mode?: CoordinationMode;
+  spacetimedb_reachable?: boolean;
+  conversation_mode?: ConversationMode;
   [key: string]: unknown;
 }
 

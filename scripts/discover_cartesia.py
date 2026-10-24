@@ -25,6 +25,39 @@ def fp(key: str) -> str:
     return f"{key[:7]}…{key[-4:]} (len={len(key)})" if len(key) > 12 else "set"
 
 
+def _verdict(report: dict, *, ready: bool, checklist: list[str], notes: list[str] | None = None) -> int:
+    """Print ONE unambiguous READY/BLOCKED line, write evidence, return the
+    exit code. BLOCKED always exits non-zero; never prints secret material
+    (only `fp()` fingerprints appear anywhere in this script's output)."""
+    report["verdict"] = "ready" if ready else "blocked"
+    report["checklist"] = checklist
+    report["notes"] = notes or []
+
+    print("\n" + "=" * 68)
+    if ready:
+        print("VERDICT: READY - a real outbound call can be attempted.")
+        resolved = report.get("resolved", {})
+        print(f"  CARTESIA_AGENT_ID={resolved.get('agent_id', '')}")
+        print(f"  CARTESIA_FROM_NUMBER_ID={resolved.get('from_number_id', '')}")
+        for note in notes or []:
+            print(f"  note: {note}")
+        print("\nNext: python scripts/smoke_call.py")
+    else:
+        print("VERDICT: BLOCKED - a real outbound call cannot be attempted yet.")
+        print("\nTo unblock, complete every item below:")
+        for i, item in enumerate(checklist, 1):
+            print(f"  {i}. {item}")
+        for note in notes or []:
+            print(f"  (optional) {note}")
+    print("=" * 68)
+
+    (ROOT / "evidence").mkdir(exist_ok=True)
+    out = ROOT / "evidence" / "cartesia_discovery.json"
+    out.write_text(json.dumps(report, indent=2))
+    print(f"\nEvidence written to {out.relative_to(ROOT)}")
+    return 0 if ready else 1
+
+
 def main() -> int:
     s = get_settings()
     report: dict = {
@@ -47,16 +80,12 @@ def main() -> int:
     print(f"SDK                : {report['sdk']}")
     print(f"cartesia-version   : {s.cartesia_version}")
 
+    checklist: list[str] = []
+
     if not s.cartesia_api_key:
-        print("\nFAIL: CARTESIA_API_KEY is not set.")
-        print("  1. Create a key at https://play.cartesia.ai/keys")
-        print("  2. Put it in .env as CARTESIA_API_KEY=...")
+        checklist.append("Create a key at https://play.cartesia.ai/keys and put it in .env as CARTESIA_API_KEY=...")
         report["steps"]["api_key"] = "missing"
-        (ROOT / "evidence").mkdir(exist_ok=True)
-        (ROOT / "evidence" / "cartesia_discovery.json").write_text(
-            json.dumps(report, indent=2)
-        )
-        return 2
+        return _verdict(report, ready=False, checklist=checklist)
 
     print(f"API key            : {fp(s.cartesia_api_key)}")
 
@@ -65,22 +94,27 @@ def main() -> int:
     agents: list = []
     try:
         data = ca.list_agents()
-        agents = data if isinstance(data, list) else (data.get("data") or data.get("agents") or [])
+        agents = data if isinstance(data, list) else (data.get("summaries") or data.get("data") or data.get("agents") or [])
         report["steps"]["list_agents"] = {"ok": True, "count": len(agents)}
         print(f"      OK - {len(agents)} agent(s) on this account")
         for a in agents:
             if isinstance(a, dict):
                 print(f"        - id={a.get('id')!r} name={a.get('name')!r}")
-    except ca.CartesiaCallError as e:
-        report["steps"]["list_agents"] = {
-            "ok": False, "status": e.status, "body": str(e.body)[:400]
-        }
+    except ca.CartesiaAuthError as e:
+        report["steps"]["list_agents"] = {"ok": False, "status": e.status, "body": str(e.body)[:400]}
         print(f"      FAIL - {e}")
-        if e.status in (401, 403):
-            print("      -> Key rejected. Check it is a live key from play.cartesia.ai/keys")
+        checklist.append(
+            "CARTESIA_API_KEY was rejected (401/403). Generate a fresh live key at "
+            "https://play.cartesia.ai/keys and confirm it was pasted without quotes/whitespace."
+        )
+    except ca.CartesiaCallError as e:
+        report["steps"]["list_agents"] = {"ok": False, "status": e.status, "body": str(e.body)[:400]}
+        print(f"      FAIL - {e}")
+        checklist.append(f"GET /agents failed ({e}). Check network access to api.cartesia.ai.")
     except Exception as e:
         report["steps"]["list_agents"] = {"ok": False, "error": str(e)[:400]}
         print(f"      FAIL - {e}")
+        checklist.append(f"GET /agents raised an unexpected error: {e}")
 
     # --- Step 2: list phone numbers ---
     print("\n[2/2] GET phone numbers ...")
@@ -104,40 +138,55 @@ def main() -> int:
     except Exception as e:
         report["steps"]["list_phone_numbers"] = {"ok": False, "error": str(e)[:400]}
         print(f"      FAIL - {e}")
-        print("      -> You likely have no provisioned number yet.")
-        print("         Provision one in the Playground, or import a Twilio number.")
+        checklist.append(
+            "No phone number found. Provision a Cartesia number (US-only) or import a "
+            "Twilio number in the Playground -> Agents -> Phone Numbers."
+        )
 
     # --- Verdict ---
-    print("\n" + "=" * 68)
+    notes: list[str] = []
     agent_id = s.cartesia_agent_id or (
         agents[0].get("id") if agents and isinstance(agents[0], dict) else ""
     )
     number_id = s.cartesia_from_number_id or (
         numbers[0].get("id") if numbers and isinstance(numbers[0], dict) else ""
     )
+    if not agent_id:
+        checklist.append(
+            "No Managed Agent found/configured. Create one at play.cartesia.ai -> Agents "
+            "(the SDK has no create() method - this step is manual), then set "
+            "CARTESIA_AGENT_ID in .env."
+        )
+    elif not s.cartesia_agent_id:
+        notes.append(f"Set CARTESIA_AGENT_ID={agent_id} in .env to pin this agent explicitly.")
+    if not number_id:
+        checklist.append("Provision/import a phone number (see step 2 above), then set CARTESIA_FROM_NUMBER_ID in .env.")
+    elif not s.cartesia_from_number_id:
+        notes.append(f"Set CARTESIA_FROM_NUMBER_ID={number_id} in .env to pin this number explicitly.")
+    if not s.my_phone_e164:
+        notes.append("Set MY_PHONE_E164=+1XXXXXXXXXX in .env - the number scripts/smoke_call.py dials by default.")
 
-    if agent_id and number_id:
-        print("READY to attempt a REAL outbound call. Put these in .env:")
-        print(f"  CARTESIA_AGENT_ID={agent_id}")
-        print(f"  CARTESIA_FROM_NUMBER_ID={number_id}")
-        print(f"  MY_PHONE_E164={s.my_phone_e164 or '+1XXXXXXXXXX'}")
-        print("\nThen run:  python scripts/smoke_call.py")
-        report["verdict"] = "ready"
-    else:
-        print("NOT READY for a real call. Missing:")
-        if not agent_id:
-            print("  - a Managed Agent. Create one at play.cartesia.ai -> Agents")
-        if not number_id:
-            print("  - a phone number. Provision in Playground or import from Twilio")
-        report["verdict"] = "blocked"
-    print("=" * 68)
+    # The configured agent id must actually exist on the account. Without this
+    # check a stale/incorrect CARTESIA_AGENT_ID (e.g. a phone-number id pasted
+    # by mistake) produced a false READY verdict.
+    agent_ids = {a.get("id") for a in agents if isinstance(a, dict)}
+    if agent_id and agent_ids and agent_id not in agent_ids:
+        checklist.append(
+            f"CARTESIA_AGENT_ID={agent_id} does not exist on this account "
+            f"(found: {sorted(agent_ids) or 'none'}). Note a phone-number id "
+            f"starts with 'ap_' while an agent id starts with 'agent_'."
+        )
+    if agent_id and not agent_ids:
+        checklist.append(
+            f"CARTESIA_AGENT_ID={agent_id} is set but the account has NO agents. "
+            "Create a Managed Agent at https://play.cartesia.ai -> Agents "
+            "(the API/SDK cannot create a *managed* agent - it only creates "
+            "Line-style agents that require a git deployment)."
+        )
 
     report["resolved"] = {"agent_id": agent_id, "from_number_id": number_id}
-    (ROOT / "evidence").mkdir(exist_ok=True)
-    out = ROOT / "evidence" / "cartesia_discovery.json"
-    out.write_text(json.dumps(report, indent=2))
-    print(f"\nEvidence written to {out.relative_to(ROOT)}")
-    return 0 if report["verdict"] == "ready" else 1
+    ready = bool(agent_id and number_id) and not checklist
+    return _verdict(report, ready=ready, checklist=checklist, notes=notes)
 
 
 if __name__ == "__main__":

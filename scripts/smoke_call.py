@@ -26,6 +26,18 @@ from app.config import get_settings  # noqa: E402
 from app.services.consent import validate_e164  # noqa: E402
 
 
+def _blocked(checklist: list[str]) -> int:
+    """Print ONE unambiguous BLOCKED verdict with a precise checklist and
+    exit non-zero. Never prints secret material."""
+    print("\n" + "=" * 68)
+    print("VERDICT: BLOCKED - no call was attempted.")
+    print("\nTo unblock, complete every item below:")
+    for i, item in enumerate(checklist, 1):
+        print(f"  {i}. {item}")
+    print("=" * 68)
+    return 2
+
+
 def main() -> int:
     s = get_settings()
     target = sys.argv[1] if len(sys.argv) > 1 else s.my_phone_e164
@@ -35,24 +47,34 @@ def main() -> int:
     print("=" * 68)
 
     if not target:
-        print("FAIL: no target number. Set MY_PHONE_E164 in .env or pass it as an argument.")
-        return 2
+        return _blocked([
+            "No target number. Set MY_PHONE_E164=+1XXXXXXXXXX in .env, or pass "
+            "one as an argument: python scripts/smoke_call.py +1XXXXXXXXXX",
+        ])
     try:
         target = validate_e164(target)
     except Exception as e:
-        print(f"FAIL: {e}")
-        return 2
+        return _blocked([f"The target number is not valid E.164: {e}"])
 
     if not s.cartesia_call_ready:
-        print("FAIL: Cartesia is not call-ready. Missing:")
+        checklist = []
         if not s.cartesia_api_key:
-            print("  - CARTESIA_API_KEY")
+            checklist.append(
+                "Create a key at https://play.cartesia.ai/keys and set CARTESIA_API_KEY in .env."
+            )
         if not s.cartesia_agent_id:
-            print("  - CARTESIA_AGENT_ID")
+            checklist.append(
+                "Create a Managed Agent at play.cartesia.ai -> Agents and set "
+                "CARTESIA_AGENT_ID in .env (run python scripts/setup_cartesia_agent.py "
+                "for the exact config to paste)."
+            )
         if not s.cartesia_from_number_id:
-            print("  - CARTESIA_FROM_NUMBER_ID")
-        print("\nRun: python scripts/discover_cartesia.py")
-        return 2
+            checklist.append(
+                "Provision or import a phone number in the Playground and set "
+                "CARTESIA_FROM_NUMBER_ID in .env."
+            )
+        checklist.append("Then re-verify with: python scripts/discover_cartesia.py")
+        return _blocked(checklist)
 
     masked = f"***{target[-4:]}"
     print(f"target             : {masked}")
@@ -95,9 +117,11 @@ def main() -> int:
     (ROOT / "evidence").mkdir(exist_ok=True)
 
     if not result.ok:
-        print(f"\nFAILED after {elapsed_ms}ms")
+        print("\n" + "=" * 68)
+        print(f"VERDICT: BLOCKED - provider rejected the call after {elapsed_ms}ms.")
         print(f"  error: {result.error}")
         print("\nNO CALL WAS PLACED. Do not claim a live call in any doc or demo.")
+        print("=" * 68)
         out = ROOT / "evidence" / "real_call_FAILED.json"
         out.write_text(json.dumps(evidence, indent=2))
         print(f"Evidence: {out.relative_to(ROOT)}")
@@ -133,7 +157,7 @@ def main() -> int:
     out.write_text(json.dumps(evidence, indent=2))
 
     print("\n" + "=" * 68)
-    print("RESULT: provider accepted and issued a real call id.")
+    print("VERDICT: READY/PLACED - provider accepted and issued a real call id.")
     print(f"  call id : {result.provider_call_id}")
     print(f"  status  : {evidence.get('final_status', 'see polls')}")
     print(f"  evidence: {out.relative_to(ROOT)}")

@@ -23,7 +23,7 @@
  * so what is STORED is a true option.
  */
 import { SenderError, t, type InferSchema, type ReducerCtx } from 'spacetimedb/server';
-import spacetimedb from './schema';
+import spacetimedb, { planProposals } from './schema';
 
 export { default } from './schema';
 
@@ -116,13 +116,35 @@ export const onDisconnect = spacetimedb.clientDisconnected(ctx => {
 });
 
 /**
- * Even a privileged subscriber may only ever see its OWN principal row. The
- * table is already `public: false`, so this is defence in depth: if the table
- * were ever flipped public by mistake, the filter still prevents enumeration
- * of the service identities.
+ * DOCUMENTED DEVIATION - no clientVisibilityFilter on `service_principals`.
+ *
+ * CONTRACTS_V2.md section 2 asks for a `clientVisibilityFilter` on any
+ * non-public table. SpacetimeDB 2.13.0 REFUSES that combination. The real
+ * publish error was:
+ *
+ *   Error: failed to create row-level security:
+ *   `SELECT * FROM service_principals WHERE identity = :sender`:
+ *   Cannot define RLS rule on private table: service_principals.
+ *   Please make table public if you wish to restrict access using RLS.
+ *
+ * RLS is the mechanism for narrowing a PUBLIC table. `public: false` is
+ * strictly stronger: the table is not subscribable at all, by anyone, so there
+ * is nothing for a filter to narrow. Making the table public just to attach a
+ * filter would be a downgrade, so the table stays private and the filter is
+ * omitted. The protected-projection capability is demonstrated instead by the
+ * `activePlanProposals` view below, which is a real RLS-style narrowing of a
+ * public table.
  */
-export const servicePrincipalFilter = spacetimedb.clientVisibilityFilter.sql(
-  'SELECT * FROM service_principals WHERE identity = :sender'
+
+/**
+ * A protected, computed projection: subscribers receive ONLY the currently
+ * active proposal versions, never the superseded ones. The row set is
+ * recomputed by the database, not by the client, so a client cannot widen it.
+ */
+export const activePlanProposals = spacetimedb.anonymousView(
+  { name: 'active_plan_proposals', public: true },
+  t.array(planProposals.rowType),
+  ctx => ctx.from.planProposals.where(p => p.active.eq(true))
 );
 
 // ---------------------------------------------------------------------------

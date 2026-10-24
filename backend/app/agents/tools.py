@@ -160,6 +160,43 @@ TOOL_SPECS: list[dict[str, Any]] = [
 # These are backend-authorized only. See specs/CONTRACTS.md section 1.
 MODEL_FORBIDDEN_TOOLS = {"confirm_plan", "send_confirmation", "start_outbound_call"}
 
+# The subset handed to Claude during a LIVE conversational turn
+# (`agents/conversation.py`). Deliberately narrower than TOOL_SPECS: every tool
+# here is read-only except `store_preference_feedback`, which only ever creates a
+# memory row. `record_friend_response` and `request_patient_approval` are
+# withheld on purpose - during a live turn the model's job is interpretation and
+# phrasing, and the deterministic backend records responses from the returned
+# intent. That keeps "who recorded what" single-sourced and means a hallucinated
+# tool call cannot advance plan state at all.
+CONVERSATION_TOOL_NAMES: tuple[str, ...] = (
+    "get_support_context",
+    "verify_consent",
+    "find_free_slots",
+    "suggest_activity",
+    "lookup_showtimes",
+    "store_preference_feedback",
+)
+
+
+def tool_specs(names: tuple[str, ...] | list[str] | None = None) -> list[dict[str, Any]]:
+    """Anthropic-format tool specs, optionally filtered to `names`.
+
+    Raises ValueError if a caller asks for a model-forbidden tool, so a wiring
+    mistake fails loudly at startup instead of quietly widening the model's
+    authority.
+    """
+    if names is None:
+        return list(TOOL_SPECS)
+    wanted = list(names)
+    bad = [n for n in wanted if n in MODEL_FORBIDDEN_TOOLS]
+    if bad:
+        raise ValueError(f"refusing to expose model-forbidden tools: {bad}")
+    by_name = {spec["name"]: spec for spec in TOOL_SPECS}
+    missing = [n for n in wanted if n not in by_name]
+    if missing:
+        raise ValueError(f"unknown tool(s): {missing}")
+    return [by_name[n] for n in wanted]
+
 
 # --------------------------------------------------------------------------
 # Handlers

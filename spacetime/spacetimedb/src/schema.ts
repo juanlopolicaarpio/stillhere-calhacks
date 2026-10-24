@@ -15,9 +15,11 @@
  * redacts to `***1234` BEFORE it is ever passed to a reducer.
  *
  * `service_principals` is the single non-public table: it holds the identities
- * allowed to call privileged reducers, and additionally carries a
- * clientVisibilityFilter so that even a privileged subscriber can only ever
- * see its own row.
+ * allowed to call privileged reducers. It carries NO clientVisibilityFilter,
+ * because SpacetimeDB 2.13.0 rejects RLS on a private table outright ("Cannot
+ * define RLS rule on private table"). `public: false` is the stronger
+ * guarantee anyway - the table is not subscribable at all. See the long note
+ * in `index.ts` and docs/SPACETIMEDB_ARCHITECTURE.md.
  */
 import { table, schema, t } from 'spacetimedb/server';
 
@@ -186,3 +188,11 @@ const spacetimedb = schema({
 });
 
 export default spacetimedb;
+
+/**
+ * Exported ONLY so `index.ts` can reference `planProposals.rowType` as the
+ * declared return type of the `active_plan_proposals` view. This is a
+ * compile-time schema builder, not a module export: `index.ts` does not
+ * re-export it, so SpacetimeDB never sees it as a registered export.
+ */
+export { planProposals };

@@ -37,6 +37,95 @@ def available() -> bool:
 
 
 # --------------------------------------------------------------------------
+# Tool-use turn (used by agents/conversation.py)
+# --------------------------------------------------------------------------
+
+class LLMUnavailable(Exception):
+    """No API key, so there is no Claude to call. Callers must degrade."""
+
+
+def tool_turn(
+    *,
+    system: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    max_tokens: int = 700,
+    tool_choice: dict[str, Any] | None = None,
+) -> Any:
+    """One raw `messages.create` call with tools, returning the SDK response.
+
+    Deliberately thin: the agentic loop (reading `tool_use` blocks, dispatching
+    them, feeding `tool_result` back) lives in `agents/conversation.py` so the
+    loop and its safety gates are testable without a network.
+
+    Raises `LLMUnavailable` when no key is configured. Provider/transport errors
+    propagate so the caller can degrade honestly rather than silently.
+    """
+    if not available():
+        raise LLMUnavailable("ANTHROPIC_API_KEY is not set")
+    s = get_settings()
+    kwargs: dict[str, Any] = {
+        "model": s.anthropic_model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": messages,
+        "tools": tools,
+    }
+    if tool_choice is not None:
+        kwargs["tool_choice"] = tool_choice
+    return _client().messages.create(**kwargs)
+
+
+def blocks_of(resp: Any) -> list[Any]:
+    """Content blocks of a response, tolerant of a missing/odd shape."""
+    return list(getattr(resp, "content", None) or [])
+
+
+def text_of(resp: Any) -> str:
+    """Concatenated text blocks of a response."""
+    return "".join(
+        getattr(b, "text", "") or ""
+        for b in blocks_of(resp)
+        if getattr(b, "type", "") == "text"
+    ).strip()
+
+
+def tool_uses_of(resp: Any) -> list[dict[str, Any]]:
+    """`tool_use` blocks as plain dicts: {id, name, input}."""
+    out: list[dict[str, Any]] = []
+    for b in blocks_of(resp):
+        if getattr(b, "type", "") != "tool_use":
+            continue
+        out.append({
+            "id": getattr(b, "id", "") or "",
+            "name": getattr(b, "name", "") or "",
+            "input": dict(getattr(b, "input", None) or {}),
+        })
+    return out
+
+
+def assistant_echo(resp: Any) -> dict[str, Any]:
+    """Re-serialize an assistant turn so it can be appended to `messages`.
+
+    Only text and tool_use blocks are echoed, which is all the Messages API
+    needs to continue a tool-use loop.
+    """
+    content: list[dict[str, Any]] = []
+    for b in blocks_of(resp):
+        t = getattr(b, "type", "")
+        if t == "text" and (getattr(b, "text", "") or "").strip():
+            content.append({"type": "text", "text": b.text})
+        elif t == "tool_use":
+            content.append({
+                "type": "tool_use",
+                "id": getattr(b, "id", "") or "",
+                "name": getattr(b, "name", "") or "",
+                "input": dict(getattr(b, "input", None) or {}),
+            })
+    return {"role": "assistant", "content": content}
+
+
+# --------------------------------------------------------------------------
 # Companion chat
 # --------------------------------------------------------------------------
 

@@ -60,7 +60,7 @@ def main() -> int:
         try:
             data = ca.list_agents()
             agents = data if isinstance(data, list) else (
-                data.get("data") or data.get("agents") or []
+                data.get("summaries") or data.get("data") or data.get("agents") or []
             )
             print(f"\nAgents on this account: {len(agents)}")
             for a in agents:

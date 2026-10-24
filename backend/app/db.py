@@ -12,6 +12,58 @@ from .config import get_settings
 
 _local = threading.local()
 
+# --- additive table migrations -------------------------------------------
+# Whole tables added after the original schema. Declared as their own DDL
+# constants (and appended to SCHEMA below) so `init_db()` can create them on
+# databases that predate them - the column-level migration loop in `init_db()`
+# can add a column but not a table.
+#
+# contact_events is the longitudinal contact history behind
+# `services/baseline.py` / `services/opportunity.py`. Deliberately no FK
+# constraints, matching specs/CONTRACTS_V3.md §2.
+CONTACT_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS contact_events (
+  id TEXT PRIMARY KEY,
+  patient_id TEXT NOT NULL,
+  contact_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'observed',
+  note TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_contact_events_pair
+  ON contact_events(patient_id, contact_id, occurred_at);
+"""
+
+# calendar_tokens holds the OAuth grants behind `adapters/google_calendar.py`
+# and `adapters/microsoft_graph.py`, per specs/CONTRACTS_V3.md §3. The token
+# columns hold SECRETS: they are never logged, never put in an event payload
+# and never returned from an API route. They are sealed at rest when
+# CALENDAR_TOKEN_KEY is set (see the adapter's `seal`/`unseal`), and stored in
+# plaintext otherwise - a documented known gap in
+# docs/CALENDAR_INTEGRATION.md. One grant per (user_id, provider).
+CALENDAR_TOKENS_DDL = """
+CREATE TABLE IF NOT EXISTS calendar_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL DEFAULT '',
+  expires_at TEXT,
+  scopes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_calendar_tokens_user_provider
+  ON calendar_tokens(user_id, provider);
+"""
+
+ADDITIVE_TABLES: tuple[tuple[str, str], ...] = (
+    ("contact_events", CONTACT_EVENTS_DDL),
+    ("calendar_tokens", CALENDAR_TOKENS_DDL),
+)
+
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
@@ -204,6 +256,9 @@ CREATE INDEX IF NOT EXISTS idx_events_seq ON agent_events(seq);
 CREATE INDEX IF NOT EXISTS idx_calls_idem ON calls(idempotency_key);
 """
 
+# Additive tables are part of the canonical schema for a fresh database too.
+SCHEMA += "".join(ddl for _name, ddl in ADDITIVE_TABLES)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -237,6 +292,14 @@ def init_db() -> None:
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    # Additive TABLE migrations, for databases created before these tables
+    # existed. Idempotent: the DDL is only run when the table is absent.
+    for table, ddl in ADDITIVE_TABLES:
+        present = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        if present is None:
+            conn.executescript(ddl)
     conn.commit()
 
 

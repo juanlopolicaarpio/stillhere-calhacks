@@ -8,6 +8,7 @@ import { InvitePage } from './pages/InvitePage';
 import { ConsentSettings } from './pages/ConsentSettings';
 import { Companion } from './pages/Companion';
 import { Dashboard } from './pages/Dashboard';
+import { SyncProof } from './pages/SyncProof';
 
 function NotFound() {
   return (
@@ -35,6 +36,7 @@ function App() {
           <Route path="/settings/consent" element={<ConsentSettings />} />
           <Route path="/companion" element={<Companion />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/sync-proof" element={<SyncProof />} />
           <Route path="/404" element={<NotFound />} />
           <Route path="*" element={<Navigate to="/404" replace />} />
         </Route>

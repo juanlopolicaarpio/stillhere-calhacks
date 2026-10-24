@@ -1,0 +1,14 @@
+(node:25708) ExperimentalWarning: `--experimental-loader` may be removed in the future; instead use `register()`:
+--import 'data:text/javascript,import { register } from "node:module"; import { pathToFileURL } from "node:url"; register("./scripts/ts-ext-resolve-hook.mjs", pathToFileURL("./"));'
+(Use `node --trace-warnings ...` to show where the warning was created)
+[2026-10-24T19:22:50.748Z] [client-A] starting independent connection to ws://127.0.0.1:3000 db=stillhere
+ℹ️ INFO Connecting to SpacetimeDB WS...
+[2026-10-24T19:22:50.821Z] [client-A] CONNECTED. own identity=c2007f2ab41785b8...
+[2026-10-24T19:22:50.844Z] [client-A] subscription applied (initial snapshot received)
+[2026-10-24T19:22:50.845Z] [client-A] demo_presence INSERT connectionId=curl-trigger label=Trigger process A
+[2026-10-24T19:22:50.845Z] [client-A] plan_proposals INSERT proposalId=plan_2d9 version=1 active=true activity="a Marvel movie" startsAt=2026-10-31T19:10:00+00:00
+[2026-10-24T19:22:50.845Z] [client-A] participant_responses INSERT proposalId=plan_2d9 version=1 role=patient response=accepted
+[2026-10-24T19:22:50.845Z] [client-A] participant_responses INSERT proposalId=plan_2d9 version=1 role=contact response=accepted
+[2026-10-24T19:23:04.759Z] [client-A] demo_presence INSERT connectionId=live-test-ma label=LIVE marker 1792869784
+[2026-10-24T19:23:19.359Z] [client-A] plan_proposals INSERT proposalId=plan_0ce version=1 active=true activity="a Marvel movie" startsAt=2026-10-31T17:00:00+00:00
+[2026-10-24T19:23:28.868Z] [client-A] plan_proposals INSERT proposalId=plan_783 version=1 active=true activity="a Marvel movie" startsAt=2026-10-31T17:00:00+00:00

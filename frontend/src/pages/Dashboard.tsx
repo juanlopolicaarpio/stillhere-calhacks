@@ -19,6 +19,8 @@ import { ErrorNotice } from '../components/ErrorNotice';
 import { MockDataBadge, SimulatedBadge, VisibilityBadge } from '../components/Badges';
 import { useAgentEvents } from '../hooks/useAgentEvents';
 import { useLocalStorage } from '../hooks/useLocalStorage';
+import { StatusModesBar, useStatus } from '../components/StatusModesBar';
+import { Link } from 'react-router-dom';
 
 function fmtTime(ts: string): string {
   try {
@@ -51,6 +53,7 @@ export function Dashboard() {
   const [tokenInput, setTokenInput] = useState(token);
 
   const { events, connected, streamError } = useAgentEvents(token || undefined);
+  const { status: statusResp } = useStatus();
 
   const [recentEvents, setRecentEvents] = useState<AgentEvent[]>([]);
   const [recentError, setRecentError] = useState<string | null>(null);
@@ -275,6 +278,13 @@ export function Dashboard() {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <StatusModesBar status={statusResp} />
+        <Link to="/sync-proof" className="text-sm font-medium" style={{ color: 'var(--sh-accent)' }}>
+          View two-client SpacetimeDB sync proof →
+        </Link>
+      </div>
+
       <ErrorNotice message={streamError} />
       <ErrorNotice message={recentError} />
 
@@ -337,6 +347,65 @@ export function Dashboard() {
             ) : (
               <p className="text-sm" style={{ color: 'var(--sh-text-muted)' }}>
                 No plan started yet. Use "Start outreach" above.
+              </p>
+            )}
+          </Card>
+
+          <Card>
+            <h2 className="mb-3 text-lg font-semibold">Participants</h2>
+            {plan && plan.participants.length > 0 ? (
+              <>
+                {plan.participants.filter((p) => p.role === 'contact').length > 1 && (
+                  <p className="mb-2 text-xs font-medium" style={{ color: 'var(--sh-accent)' }}>
+                    Group plan — {plan.participants.filter((p) => p.role === 'contact').length}{' '}
+                    contact participants.
+                  </p>
+                )}
+                <ul className="space-y-2 text-sm">
+                  {plan.participants.map((p, i) => {
+                    const isContact = p.role === 'contact';
+                    const contactIdx = plan.participants
+                      .filter((q) => q.role === 'contact')
+                      .indexOf(p);
+                    return (
+                      <li
+                        key={`${p.role}-${p.user_id}-${i}`}
+                        className="flex items-center justify-between gap-2 rounded-xl border p-3"
+                        style={{ borderColor: 'var(--sh-border)' }}
+                      >
+                        <span className="font-medium">
+                          {isContact
+                            ? plan.participants.filter((q) => q.role === 'contact').length > 1
+                              ? `Contact #${contactIdx + 1}`
+                              : 'Contact'
+                            : 'Sam (patient)'}
+                        </span>
+                        <span className="flex items-center gap-2">
+                          {p.response ? (
+                            <span
+                              className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                p.response === 'accepted'
+                                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200'
+                                  : 'bg-stone-200 text-stone-700 dark:bg-stone-500/15 dark:text-stone-300'
+                              }`}
+                            >
+                              {p.response}
+                            </span>
+                          ) : (
+                            <span className="text-xs" style={{ color: 'var(--sh-text-muted)' }}>
+                              no response yet
+                            </span>
+                          )}
+                          {p.simulated && <SimulatedBadge />}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            ) : (
+              <p className="text-sm" style={{ color: 'var(--sh-text-muted)' }}>
+                No participants yet.
               </p>
             )}
           </Card>

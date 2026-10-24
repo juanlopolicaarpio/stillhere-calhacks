@@ -1,0 +1,11 @@
+INFO:     Started server process [30596]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:56064 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56084 - "GET /health HTTP/1.1" 200 OK
+SPACETIMEDB_TOKEN is unset; using local CLI token (dev only) from C:\Users\User\AppData\Local\SpacetimeDB\config\cli.toml. Set SPACETIMEDB_TOKEN explicitly for any non-local deployment.
+INFO:     127.0.0.1:56098 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56143 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56156 - "POST /api/demo/reset HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56161 - "POST /api/demo/start HTTP/1.1" 200 OK

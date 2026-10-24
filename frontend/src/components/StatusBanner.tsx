@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ApiError, getStatus, type VoiceMode } from '../api/client';
+import { ApiError, getStatus, type StatusResponse, type VoiceMode } from '../api/client';
+import { StatusModesBar } from './StatusModesBar';
 
 /**
  * Persistent, honest banner. Reads GET /api/status and tells the truth about
@@ -8,13 +9,17 @@ import { ApiError, getStatus, type VoiceMode } from '../api/client';
  */
 export function StatusBanner() {
   const [voiceMode, setVoiceMode] = useState<VoiceMode | null>(null);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     getStatus()
       .then((s) => {
-        if (!cancelled) setVoiceMode(s.voice_mode);
+        if (!cancelled) {
+          setVoiceMode(s.voice_mode);
+          setStatus(s);
+        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -51,17 +56,22 @@ export function StatusBanner() {
           : 'bg-emerald-100 text-emerald-900 dark:bg-emerald-500/15 dark:text-emerald-100'
       }`}
     >
-      {isSimulated ? (
-        <>
-          Voice mode: <strong>simulated</strong>. This build uses a local voice simulator — no
-          real phone call is ever placed.
-        </>
-      ) : (
-        <>
-          Voice mode: <strong>cartesia_pstn</strong>. Real PSTN calling via Cartesia is
-          configured — calls made from here are real.
-        </>
-      )}
+      <div>
+        {isSimulated ? (
+          <>
+            Voice mode: <strong>simulated</strong>. This build uses a local voice simulator — no
+            real phone call is ever placed.
+          </>
+        ) : (
+          <>
+            Voice mode: <strong>cartesia_pstn</strong>. Real PSTN calling via Cartesia is
+            configured — calls made from here are real.
+          </>
+        )}
+      </div>
+      <div className="mt-1.5 flex justify-center">
+        <StatusModesBar status={status} />
+      </div>
     </div>
   );
 }

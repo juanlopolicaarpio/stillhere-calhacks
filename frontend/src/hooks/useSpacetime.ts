@@ -36,7 +36,7 @@ export function useSpacetime() {
   const [planConfirmations, confirmReady] = useTable(tables.planConfirmations);
   const [demoPresence, presenceReady] = useTable(tables.demoPresence);
 
-  const callUpsertPresence = useStdbReducer(reducers.upsertPresence);
+  const callUpsertPresence = useStdbReducer(reducers.upsertDemoPresence);
 
   const tablesReady = useMemo(
     () =>

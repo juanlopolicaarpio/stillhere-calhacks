@@ -10,11 +10,35 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
-# Each test session gets an isolated database file.
-_tmp = Path(tempfile.gettempdir()) / "stillhere_test.db"
+# Each test PROCESS gets its own database file.
+#
+# A fixed filename meant two concurrent `pytest` runs shared one SQLite file and
+# the autouse `fresh_db` fixture wiped the other run's rows mid-test, surfacing
+# as "no plan '<id>'" from `get_plan`. Scoping by pid makes a test run immune to
+# anything else happening on the machine.
+_tmp = Path(tempfile.gettempdir()) / f"stillhere_test_{os.getpid()}.db"
 os.environ["DB_PATH"] = str(_tmp)
 os.environ["WEBHOOK_SECRET"] = "test-secret"
 os.environ["DASHBOARD_TOKEN"] = "test-dash"
+
+# Tests get their OWN SpacetimeDB database, never the one the running app uses.
+#
+# This is not tidiness, it is correctness. `_reset_coordination()` below clears
+# coordination tables before every test, and SpacetimeDB is a persistent
+# external process shared by anything pointed at the same database name. With
+# both on `stillhere`, a test run silently wiped a live demo's proposals
+# mid-flight and the reducer then (correctly) refused with `no_proposal`.
+# Publish it once with:
+#   cd spacetime && spacetime publish --server local --yes stillhere-test
+os.environ["SPACETIMEDB_DB"] = os.getenv("SPACETIMEDB_TEST_DB") or "stillhere-test"
+
+# Known limitation, stated rather than hidden: SpacetimeDB databases must be
+# published ahead of time, so unlike SQLite above this name cannot be made
+# per-process automatically. Two concurrent `pytest` runs therefore still share
+# `stillhere-test` and will clear each other's coordination rows. To run them in
+# parallel, give each its own published database:
+#   cd spacetime && spacetime publish --server local --yes stillhere-test-2
+#   SPACETIMEDB_TEST_DB=stillhere-test-2 python -m pytest backend/tests -q
 
 # Tests must NEVER touch a real provider, place a real call, or spend credits.
 #
@@ -91,6 +115,30 @@ def _reset_coordination() -> None:
             return
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _cleanup_db_file():
+    """Remove this process's SQLite file when the session ends."""
+    yield
+    for suffix in ("", "-wal", "-shm"):
+        candidate = Path(str(_tmp) + suffix)
+        if candidate.exists():
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _reset_coordination_once():
+    """Clear SpacetimeDB coordination state ONCE per test session.
+
+    Session-scoped clear, kept as a cheap safety net for whatever the previous
+    run left behind. Per-test isolation is `fresh_db` below.
+    """
+    _reset_coordination()
+    yield
+
+
 @pytest.fixture(autouse=True)
 def fresh_db():
     from app.config import get_settings
@@ -98,6 +146,16 @@ def fresh_db():
     from app.services import demo_reset, events
 
     get_settings.cache_clear()
+    # Per-test coordination reset is REQUIRED, not defensive. Several tests use
+    # fixed idempotency keys ("grp-2", "idem-13"), and
+    # `plan_confirmations.idempotencyKey` is UNIQUE in the module schema - so a
+    # second test reusing a key hits the constraint and the reducer refuses a
+    # confirmation that should have succeeded. Those tests pass alone and fail
+    # in a full run without this.
+    #
+    # Cost is one reducer round-trip (~0.5s), which the `reset_coordination`
+    # reducer made affordable; the earlier 8-statement SQL fallback cost 2.4s
+    # and was what made the suite unbearably slow.
     _reset_coordination()
     if _tmp.exists():
         for suffix in ("", "-wal", "-shm"):

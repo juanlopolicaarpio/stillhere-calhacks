@@ -9,6 +9,7 @@ const navItems = [
   { to: '/settings/consent', label: 'Consent settings' },
   { to: '/companion', label: 'Companion' },
   { to: '/dashboard', label: 'Judge dashboard' },
+  { to: '/sync-proof', label: 'Sync proof' },
 ];
 
 export function Layout() {

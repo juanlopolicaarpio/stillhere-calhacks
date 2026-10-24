@@ -372,12 +372,25 @@ def _dial_real(
 # Local simulator - the honest fallback, and the scripted e2e test adapter
 # --------------------------------------------------------------------------
 
+# Must stay consistent with the Cartesia agent's `llm_introduce` (see
+# prompts/OUTREACH_AGENT.md). Still Here opens with its OWN observation - the
+# computed quiet gap, the real shared free time, and the one stored memory that
+# justifies the proposal. It never says "on behalf of" or "Sam set this up":
+# that framing makes it sound like the patient outsourced caring about his
+# friend, which is the opposite of the point.
 OPENING_TEMPLATE = (
-    "Hey {contact_first_name}! This is Still Here - I'm an AI assistant calling "
-    "on behalf of {patient_first_name}. Is now an okay time? "
-    "{patient_first_name} has been wanting to see you, and I remembered you two "
-    "are into {shared_interests}. There's {proposed_activity} "
-    "{proposed_time_human}. Would you be up for it?"
+    "Hey {contact_first_name}, it's Still Here. It's been {time_since_contact} "
+    "since you and {patient_first_name} were in the same room, and I saw you're "
+    "both free {proposed_time_human}. You two used to do {shared_interests}. "
+    "Want me to put something together?"
+)
+
+#: Used when `relationships.last_contact_at` is unknown, so the agent never
+#: asserts a gap it cannot compute.
+OPENING_TEMPLATE_NO_GAP = (
+    "Hey {contact_first_name}, it's Still Here. I saw you and "
+    "{patient_first_name} are both free {proposed_time_human}, and you two used "
+    "to do {shared_interests}. Want me to put something together?"
 )
 
 
@@ -400,7 +413,15 @@ def _humanize(iso: str) -> str:
 def _open_simulated(
     call_id: str, plan_id: str, session_id: str, dv: dict[str, Any]
 ) -> dict[str, Any]:
-    opening = OPENING_TEMPLATE.format(**{**dv, "shared_interests": dv.get("shared_interests") or "the same things"})
+    filled = {
+        **dv,
+        "shared_interests": dv.get("shared_interests") or "the same things",
+    }
+    template = (
+        OPENING_TEMPLATE if filled.get("time_since_contact")
+        else OPENING_TEMPLATE_NO_GAP
+    )
+    opening = template.format(**filled)
     ex(
         "UPDATE calls SET status='answered', answered_at=? WHERE id=?",
         (now_iso(), call_id),

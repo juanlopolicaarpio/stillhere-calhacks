@@ -1,4 +1,4 @@
-.PHONY: dev backend frontend test e2e seed reset health preflight call agent clean install stdb stdb-server stdb-sql chaos verify
+.PHONY: dev backend frontend test e2e seed reset health preflight call agent clean install stdb stdb-server stdb-sql chaos verify demo-up arm sim api-contracts
 
 PY := ./.venv/Scripts/python.exe
 
@@ -59,3 +59,16 @@ verify:
 
 api-contracts:
 	$(PY) scripts/gen_api_contracts.py
+
+# ---- demo operation ----
+# Bring everything up from cold (idempotent).
+demo-up:
+	$(PY) scripts/demo_up.py
+
+# Verify a real call is possible, without placing one.
+arm:
+	$(PY) scripts/call_now.py --check
+
+# Rehearse the call in the terminal. No provider cost.
+sim:
+	$(PY) scripts/sim_call.py

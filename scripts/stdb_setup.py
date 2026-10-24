@@ -338,5 +338,28 @@ def finish(report: dict, blockers: list[str]) -> int:
     return 0 if report["verdict"] == "ready" else 1
 
 
+
+def publish_test_database() -> bool:
+    """Publish the module a second time under the test database name.
+
+    The suite points `SPACETIMEDB_DB` at `stillhere-test` so its per-test
+    coordination reset can never wipe the database a running demo is using.
+    Without this the two share state and a test run breaks a live demo.
+    """
+    cli = find_cli()
+    if cli is None:
+        print("  test database: SKIPPED (spacetime CLI not found)")
+        return False
+    code, out = run(
+        [cli, "publish", "--server", "local", "--yes", "stillhere-test"],
+        cwd=ROOT / "spacetime", timeout=600,
+    )
+    ok = code == 0
+    print(f"  test database 'stillhere-test': {'OK' if ok else 'FAILED'}")
+    if not ok:
+        print("   ", out[-300:])
+    return ok
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

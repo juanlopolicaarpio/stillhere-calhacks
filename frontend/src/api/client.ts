@@ -144,6 +144,12 @@ export type CoordinationMode = 'spacetimedb' | 'sqlite_fallback';
 /** specs/CONTRACTS_V2.md §5: 'claude' unless ANTHROPIC_API_KEY is absent. */
 export type ConversationMode = 'claude' | 'keyword_fallback';
 
+/** specs/CONTRACTS_V3.md §3: real calendar provider, or the seeded fallback. */
+export type CalendarMode = 'google' | 'microsoft' | 'seeded' | string;
+
+/** specs/CONTRACTS_V3.md §5: a genuinely configured provider, or honest 'unbooked'. */
+export type BookingMode = 'unbooked' | string;
+
 export interface StatusResponse {
   voice_mode: VoiceMode;
   cartesia_configured?: boolean;
@@ -162,6 +168,10 @@ export interface StatusResponse {
   coordination_mode?: CoordinationMode;
   spacetimedb_reachable?: boolean;
   conversation_mode?: ConversationMode;
+  // CONTRACTS_V3.md additions (agents H and J, built in parallel with this
+  // frontend work) — optional and absent-tolerant until those land.
+  calendar_mode?: CalendarMode;
+  booking_mode?: BookingMode;
   [key: string]: unknown;
 }
 
@@ -388,8 +398,26 @@ export interface Plan {
   confirmed_at: string | null;
 }
 
+/**
+ * specs/CONTRACTS_V3.md §4 (lead-owned group planning): `plan_participants`
+ * may contain MORE than one `role: 'contact'` row for the same plan. This
+ * row never carries a contact's name or phone — only an internal user id —
+ * so rendering the full list here does not disclose one contact's identity
+ * to another.
+ */
+export interface PlanParticipant {
+  plan_id: string;
+  user_id: string;
+  role: 'patient' | 'contact' | string;
+  response: 'accepted' | 'declined' | string | null;
+  responded_activity: string | null;
+  responded_starts_at: string | null;
+  response_at: string | null;
+  simulated: boolean;
+}
+
 export interface PlanWithParticipants extends Plan {
-  participants: unknown[];
+  participants: PlanParticipant[];
 }
 
 export interface AgentEvent {

@@ -762,3 +762,51 @@ export const upsertDemoPresence = spacetimedb.reducer(
     }
   }
 );
+
+/**
+ * Clear every coordination table in ONE transaction.
+ *
+ * Exists for two callers that both need a clean slate atomically:
+ *   - `POST /api/demo/reset`, so a rehearsal starts from nothing;
+ *   - the test suite's `fresh_db` fixture.
+ *
+ * Why a reducer rather than a series of DELETEs: the module is a persistent
+ * external process that outlives a test, so leftover rows made the suite
+ * non-hermetic (tests passed alone, failed together). Clearing over SQL took
+ * eight HTTP round-trips and ~2.4s per test, which is ten minutes of overhead
+ * across the suite. One reducer call is a single round-trip and a single
+ * transaction, so no caller can ever observe a half-cleared database.
+ *
+ * `service_principals` is deliberately NOT cleared - wiping it would lock
+ * every privileged reducer out of its own database.
+ */
+export const resetCoordination = spacetimedb.reducer(
+  { name: 'reset_coordination' },
+  (ctx) => {
+    assertPrincipal(ctx);
+    for (const row of [...ctx.db.planConfirmations.iter()]) {
+      ctx.db.planConfirmations.confirmationId.delete(row.confirmationId);
+    }
+    for (const row of [...ctx.db.participantResponses.iter()]) {
+      ctx.db.participantResponses.responseId.delete(row.responseId);
+    }
+    for (const row of [...ctx.db.planProposals.iter()]) {
+      ctx.db.planProposals.proposalId.delete(row.proposalId);
+    }
+    for (const row of [...ctx.db.consentState.iter()]) {
+      ctx.db.consentState.consentId.delete(row.consentId);
+    }
+    for (const row of [...ctx.db.callSessions.iter()]) {
+      ctx.db.callSessions.callId.delete(row.callId);
+    }
+    for (const row of [...ctx.db.connectionSessions.iter()]) {
+      ctx.db.connectionSessions.sessionId.delete(row.sessionId);
+    }
+    for (const row of [...ctx.db.agentEvents.iter()]) {
+      ctx.db.agentEvents.eventId.delete(row.eventId);
+    }
+    for (const row of [...ctx.db.demoPresence.iter()]) {
+      ctx.db.demoPresence.connectionId.delete(row.connectionId);
+    }
+  }
+);

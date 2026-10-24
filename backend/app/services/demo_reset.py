@@ -65,15 +65,19 @@ def seed(*, reset_version: int = 1) -> dict[str, Any]:
     _mk_user(DANIEL, "Daniel Osei", "contact", FAKE_DANIEL, verified=False)
 
     # --- relationships: Josh & Maya accepted, Daniel never did ---
-    for cid, label, status in (
-        (JOSH, "best friend", "accepted"),
-        (MAYA, "friend", "accepted"),
-        (DANIEL, "friend", "invited"),
+    # `last_contact_at` is seeded so the agent's "it has been a while" is a
+    # computed fact with a real number behind it, not a phrase it invents.
+    now = datetime.now(timezone.utc)
+    for cid, label, status, days_quiet in (
+        (JOSH, "best friend", "accepted", 47),
+        (MAYA, "friend", "accepted", 9),
+        (DANIEL, "friend", "invited", None),
     ):
+        last = (now - timedelta(days=days_quiet)).isoformat() if days_quiet else None
         ex(
             "INSERT INTO relationships (id, patient_id, contact_id, relationship_label,"
-            " status, created_at) VALUES (?,?,?,?,?,?)",
-            (new_id("rel"), SAM, cid, label, status, now_iso()),
+            " status, last_contact_at, created_at) VALUES (?,?,?,?,?,?,?)",
+            (new_id("rel"), SAM, cid, label, status, last, now_iso()),
         )
 
     # --- consent: only the two who accepted ---

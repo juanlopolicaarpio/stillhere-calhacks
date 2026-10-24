@@ -13,6 +13,7 @@ The context handed to the provider comes exclusively from
 from __future__ import annotations
 
 import json
+import re
 
 from typing import Any
 
@@ -30,6 +31,122 @@ class VoiceError(Exception):
 
 def _redact(n: str) -> str:
     return f"***{n[-4:]}" if n and len(n) >= 4 else "***"
+
+
+def _speakable(text: str, patient_first: str, contact_first: str) -> str:
+    """Rewrite a stored memory into something natural to say ON the call.
+
+    Memories are stored in the third person for auditability
+    ("Sam and Josh watch Marvel movies together"), which reads wrong when the
+    agent speaks it to Josh. This converts the pair into second person
+    ("you and Sam watch Marvel movies together") without touching the stored
+    row, so provenance stays intact while the spoken line sounds human.
+    """
+    out = (text or "").strip()
+    if not out:
+        return out
+    for a, b in (
+        (f"{patient_first} and {contact_first}", f"you and {patient_first}"),
+        (f"{contact_first} and {patient_first}", f"you and {patient_first}"),
+    ):
+        out = out.replace(a, b)
+    # "Josh is Sam's best friend" -> "you are Sam's best friend"
+    if out.startswith(f"{contact_first} is "):
+        out = "you are " + out[len(contact_first) + 4:]
+    return out
+
+
+def _quiet_gap(patient_id: str, contact_id: str) -> tuple[str, int | None]:
+    """How long since these two were actually in touch.
+
+    Returns a speakable phrase and the raw day count. The phrase is derived
+    from `relationships.last_contact_at`, so "it has been a while" is a fact the
+    agent reads rather than a sentiment it invents. Returns ("", None) when we
+    genuinely do not know, and the opening then omits the claim entirely.
+    """
+    from datetime import datetime, timezone
+
+    row = q1(
+        "SELECT last_contact_at FROM relationships WHERE patient_id=? AND contact_id=?",
+        (patient_id, contact_id),
+    )
+    raw = row["last_contact_at"] if row else None
+    if not raw:
+        return "", None
+    try:
+        then = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return "", None
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    days = (datetime.now(timezone.utc) - then).days
+    if days < 7:
+        return "", days          # not a gap worth remarking on
+    if days < 14:
+        return "a couple of weeks", days
+    if days < 60:
+        return f"about {round(days / 7)} weeks", days
+    return f"about {round(days / 30)} months", days
+
+
+def _pick_shared_interest(
+    interests: list[str], activity: str, patient_first: str, contact_first: str
+) -> str:
+    """Choose the ONE shared memory that actually justifies this proposal.
+
+    Reading every stored interest aloud sounds like a database dump and buries
+    the reason for the call. Prefer the memory whose words overlap the proposed
+    activity, so the opening line explains itself.
+    """
+    if not interests:
+        return ""
+    act_words = {w for w in re.split(r"\W+", (activity or "").lower()) if len(w) > 3}
+    best = max(
+        interests,
+        key=lambda m: len(act_words & {
+            w for w in re.split(r"\W+", m.lower()) if len(w) > 3
+        }),
+    )
+    return _noun_phrase(best, patient_first, contact_first)
+
+
+# Verb phrases that open a stored memory, longest first so "used to watch"
+# wins over "watch".
+_LEAD_VERBS = (
+    "used to go to ", "used to watch ", "used to grab ", "used to get ",
+    "used to do ", "like to ", "go to ", "watch ", "grab ", "get ", "do ",
+)
+
+
+def _noun_phrase(memory_text: str, patient_first: str, contact_first: str) -> str:
+    """Reduce a stored memory to the THING they did together.
+
+    "Sam and Josh watch Marvel movies together on opening weekend"
+        -> "Marvel movies together on opening weekend"
+
+    The opening line already supplies its own subject and verb ("You two used
+    to do ..."), so injecting a complete sentence produced
+    "used to do you and Sam watch Marvel movies". Stripping the memory's own
+    subject and verb leaves a fragment that slots in cleanly.
+    """
+    out = (memory_text or "").strip()
+    if not out:
+        return out
+    # Drop the subject, in either name order.
+    for subj in (
+        f"{patient_first} and {contact_first} ",
+        f"{contact_first} and {patient_first} ",
+        f"you and {patient_first} ",
+    ):
+        if out.lower().startswith(subj.lower()):
+            out = out[len(subj):]
+            break
+    low = out.lower()
+    for verb in _LEAD_VERBS:
+        if low.startswith(verb):
+            out = out[len(verb):]
+            break
+    return out.strip()
 
 
 def start_outbound_call(
@@ -106,15 +223,30 @@ def start_outbound_call(
     plan = plans.get_plan(plan_id)
     patient = q1("SELECT * FROM users WHERE id=?", (patient_id,))
 
+    contact_first = contact["display_name"].split()[0]
+    patient_first = (patient["display_name"] if patient else "your friend").split()[0]
+
     dynamic_variables = {
-        "contact_first_name": contact["display_name"].split()[0],
-        "patient_first_name": (patient["display_name"] if patient else "your friend").split()[0],
+        "contact_first_name": contact_first,
+        "patient_first_name": patient_first,
         "proposed_activity": plan["activity"],
         "proposed_time_human": _humanize(plan["starts_at"]),
         "proposed_location": plan["location"] or "",
-        "shared_interests": ", ".join(ctx["shared_interests"][:3]),
-        "relationship": ctx["relationship"] or "friend",
-        "boundaries": "; ".join(ctx["boundaries"][:2]),
+        # Speech-ready, second-person, and narrowed to the ONE memory that
+        # justifies this proposal. See _pick_shared_interest().
+        "shared_interests": _pick_shared_interest(
+            ctx["shared_interests"], plan["activity"],
+            patient_first, contact_first,
+        ),
+        "relationship": _speakable(
+            ctx["relationship"] or "a friend", patient_first, contact_first
+        ),
+        "boundaries": _speakable(
+            "; ".join(ctx["boundaries"][:1]), patient_first, contact_first
+        ),
+        # Real computed gap since they were last in touch, so the agent's own
+        # reason for calling is grounded. Empty string when unknown.
+        "time_since_contact": _quiet_gap(patient_id, contact_id)[0],
         "plan_id": plan_id,
         "session_id": session_id,
     }

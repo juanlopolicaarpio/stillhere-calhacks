@@ -1,115 +1,137 @@
 # Multi-Agent Orchestration — how this build was actually executed
 
-This describes the real process used to build Still Here, not the originally
-planned one. It is documented honestly because the deviation itself is a useful
-engineering decision, and because `specs/CONTRACTS.md` records the collapsed
-ownership split as ground truth (`specs/CONTRACTS.md §8`).
+This describes the real process used to build Still Here across both
+contract phases, not an idealized one. It is documented honestly because the
+deviations are themselves useful engineering decisions, and because the two
+frozen contracts (`specs/CONTRACTS.md`, then `specs/CONTRACTS_V2.md`) record
+ground truth about ownership at each point in time.
 
-## What was planned vs. what happened
+## Phase 1 — the baseline build (`specs/CONTRACTS.md`)
 
-The original plan was a clean A–F split: separate agents for consent, memory,
+The original plan was a clean split: separate agents for consent, memory,
 voice, planning, frontend, and docs, working in parallel against a frozen
-contract.
+contract. In practice, consent/voice/planner code turned out to be too
+interdependent to split safely across agents working concurrently — three
+call sites (`services/voice.start_outbound_call`, `services/plans.confirm_plan`,
+`agents/orchestrator.py`) all needed the same invariants to hold
+simultaneously, and splitting them risked exactly the kind of drift the
+state machine and consent gate exist to prevent. The split was collapsed to:
+lead owns the entire backend critical path; one agent owns `frontend/**`;
+docs agents own `docs/**`. The frontend agent's review of the frozen contract
+surfaced five real gaps before this baseline shipped — all fixed. Full
+account of those five gaps is preserved below, since they are still true of
+the shipped code.
 
-In practice, the consent, voice, and planner code turned out to be too
-interdependent to split safely across agents working concurrently:
+## Phase 2 — the SpacetimeDB + fluid-agent addendum (`specs/CONTRACTS_V2.md`)
 
-- `services/voice.start_outbound_call()` has to call `consent.verify_outreach()`
-  unconditionally before touching a provider (`services/voice.py:80-92`) — the
-  voice owner and consent owner would be editing the same invariant from two
-  sides.
-- `services/plans.confirm_plan()` is the single authorization point
-  (`services/plans.py:234-301`) and is called from `api/demo.py`, from
-  `api/voice.py` tool handlers, and indirectly from `agents/orchestrator.py` —
-  three call sites that all need the same guarantees to hold simultaneously.
-- The planner (`agents/orchestrator.py`) reads memory visibility rules that the
-  memory owner would also be changing.
+The second phase added three substantial pieces of new scope on top of a
+working baseline: SpacetimeDB as the authoritative coordination backend, a
+Claude-driven tool-use conversation engine replacing regex branching, and a
+real outbound PSTN call. The lead froze `specs/CONTRACTS_V2.md` as an
+addendum (not a replacement) to the original contract, with an explicit
+ownership table (`specs/CONTRACTS_V2.md §7`) assigning disjoint file sets to
+agents A (Cartesia), B (SpacetimeDB), C (fluid conversation), D (frontend), E
+(QA/security), and F (this docs agent).
 
-Splitting these into separately-owned files risked exactly the kind of drift the
-state machine and consent gate are designed to prevent (two code paths
-implementing "is this allowed" slightly differently). So the split was
-collapsed:
+### The fan-out, and why it was cut short
 
-| Area | Owner | Files |
-|---|---|---|
-| Shared contracts, config, db, state machine, main | **lead** | `config.py`, `db.py`, `domain/*`, `main.py`, `specs/*` |
-| Consent / memory / voice services, adapters, agents, API routers | **lead** | `services/*`, `adapters/*`, `agents/*`, `api/*` |
-| Frontend | **agent E** | `frontend/**` only |
-| Docs | **agent F** (this agent) | `docs/**`, `README.md` only |
-| Tests | **lead + agent F** | `backend/tests/**` |
+A first fan-out of five parallel subagents (A–E) was launched against the
+frozen V2 contract. That fan-out was **killed mid-task by an API session
+limit** before every agent finished. Rather than discard the partial work,
+the lead:
 
-The lead built the entire interdependent backend critical path directly, and owned
-every file two agents might otherwise have touched. Parallelism was preserved only
-where the interface was genuinely narrow and one-directional: the frontend consumes
-a frozen HTTP contract and nothing else; docs describe what already exists and
-write to nothing the backend or frontend read.
+1. **Verified what had actually landed** by reading the partial diffs against
+   `specs/CONTRACTS_V2.md`, not trusting agent self-reports.
+2. **Integrated the salvageable pieces directly** rather than re-launching a
+   fresh fan-out.
+3. **Found three real integration gaps by running the system**, not by
+   inspection alone:
+   - The fluid conversation engine (`backend/app/agents/conversation.py`) had
+     been written but was **not wired into** the call-handling path —
+     `services/voice.py` was still invoking the old branching logic.
+   - **SpacetimeDB was unreachable from the running app** even though the
+     module itself published and responded to `spacetime sql` directly —
+     the adapter's configuration/discovery path had a gap between what the
+     setup script verified and what the running FastAPI process actually
+     read at import time.
+   - **The two stores modeled plan revisions incompatibly**: SQLite keeps one
+     mutable `plans` row whose `version` increments in place; SpacetimeDB's
+     `plan_proposals` table is immutable, one row per version. Code written
+     against a bare plan id (not `<plan_id>_v<version>`) would silently
+     compare the wrong version in the reducer. This is the same bug described
+     in `backend/app/services/coordination.py::proposal_ref`'s code comment
+     and in `docs/IMPLEMENTATION_STATUS.md` — found once, documented in two
+     places on purpose, because it is the kind of bug that reappears if the
+     lesson isn't written down next to the code that fixes it.
+4. **Fixed all three directly** and re-ran the full test suite before
+   continuing, rather than letting a second fan-out build on top of a broken
+   integration.
 
-## The actual process
+This is the same lesson Phase 1 taught, recurring at larger scope: a frozen
+contract defines *what* must be true at the seams, but it does not by itself
+catch *whether the seams actually connect* — someone has to run the system.
+The contract process worked exactly as intended here: it gave the lead a
+precise, falsifiable list of integration points to check once agents stopped
+reporting their own completion, rather than a vague "merge and see."
 
-1. **Freeze the contract.** The lead wrote `specs/CONTRACTS.md` — ground rules,
-   visibility ladder, state machine, every HTTP endpoint shape, the event
-   vocabulary, and the frontend route list — and froze it
-   ("frozen 2026-10-24 by the lead agent... Implementation agents must code
-   against this file and must not change it", `specs/CONTRACTS.md:3-5`).
-2. **Lead builds backend.** Config, db, domain/state_machine, all services,
-   adapters, agents, and API routers, directly against the frozen contract.
-3. **Parallel subagents build against the frozen contract, not against each
-   other.** The frontend agent built `frontend/**` purely from
-   `specs/CONTRACTS.md` — `frontend/src/api/client.ts` opens with an explicit
-   instruction to future editors: *"Do not invent endpoints or rename fields —
-   this file is the frozen contract surface for the frontend. If something here
-   looks wrong, it should be reported to the lead, not quietly changed"*
-   (`client.ts:1-4`). Docs agents (this one, plus provider-specific doc owners)
-   read the finished backend and describe it.
-4. **The frontend agent's review surfaced real contract gaps**, reported to the
-   lead rather than worked around locally (see below).
-5. **The lead fixed the gaps** in the backend and updated the frozen contract,
-   and the frontend agent's code was updated to match.
+## The 5 contract gaps the frontend agent's Phase 1 review surfaced
 
-## The 5 contract gaps the frontend agent's review surfaced
+All five are fixed in the shipped backend. Evidence that they were real
+gaps, not hypothetical:
 
-All five are now fixed in the shipped backend. Evidence that they were real gaps,
-not hypothetical:
-
-1. **Missing `GET /api/circle` and `GET /api/contacts`.** The frontend had no way
-   to list a patient's invites or resolve a contact id to a display name except
-   browser `localStorage`, which breaks across devices/browsers and loses data on
-   a cache clear. Fixed: `backend/app/api/onboarding.py:280-320` (`/api/circle`,
-   with the code comment "Added after the frontend correctly reported that invites
-   were otherwise only recoverable from browser localStorage") and `:323-341`
-   (`/api/contacts`).
+1. **Missing `GET /api/circle` and `GET /api/contacts`.** The frontend had no
+   way to list a patient's invites or resolve a contact id to a display name
+   except browser `localStorage`, which breaks across devices/browsers and
+   loses data on a cache clear. Fixed: `backend/app/api/onboarding.py`
+   (`/api/circle`, with a code comment explaining why it was added; and
+   `/api/contacts`).
 2. **`EventSource` cannot send custom headers**, so the documented
-   `X-Dashboard-Token` header auth (`specs/CONTRACTS.md §7`) is unusable for the
-   one place that actually needs live auth — the SSE stream. Fixed: both
-   `GET /api/events/recent` and `GET /api/events/stream` now accept the token as
+   `X-Dashboard-Token` header auth is unusable for the one place that
+   actually needs live auth — the SSE stream. Fixed: both
+   `GET /api/events/recent` and `GET /api/events/stream` accept the token as
    *either* the header *or* a `dashboard_token` query parameter
-   (`backend/app/api/events.py:26-34`, `:37-78`), and
-   `frontend/src/hooks/useAgentEvents.ts:20-23,36-39` documents exactly why the
-   query-param path exists and uses it.
-3. **`Plan.rationale` was a single opaque string**, insufficient for a dashboard
-   that needs to show *why this contact* and *why this activity* as separate,
-   structured facts. Fixed: `plans` table gained `why_contact` and `why_activity`
-   columns (`backend/app/db.py:126-127`), populated by the orchestrator
-   (`agents/orchestrator.py:285-286`) and asserted on in
-   `test_api_flow.py::test_plan_exposes_structured_rationale`.
-4. **`GET /api/status` shape was undocumented**, so the frontend's honesty banner
-   (which must say plainly whether a real phone call is possible) had nothing
-   frozen to code against. Fixed: `backend/app/main.py:93-110` returns
+   (`backend/app/api/events.py`), and
+   `frontend/src/hooks/useAgentEvents.ts` documents why.
+3. **`Plan.rationale` was a single opaque string**, insufficient for a
+   dashboard that needs *why this contact* and *why this activity* as
+   separate, structured facts. Fixed: `plans` table gained `why_contact` and
+   `why_activity` columns, populated by the orchestrator.
+4. **`GET /api/status` shape was undocumented**, so the frontend's honesty
+   banner had nothing frozen to code against. Fixed: the endpoint returns
    `config.redacted()` plus `real_call_possible` and a plain-English `notes`
-   string, and this shape is now what `frontend/src/api/client.ts:113-116`
-   (`StatusResponse`) is typed against.
-5. *(Reported together with the above as one review pass; the fifth gap folded
-   into the `/api/circle` fix once the lead traced why the frontend needed it —
+   string, now also carrying `coordination_mode` and `conversation_mode` as
+   of the V2 addendum.
+5. *(Reported together with the above as one review pass; folded into the
+   `/api/circle` fix once the lead traced why the frontend needed it —
    `callable` as a server-computed boolean per invite, rather than three raw
-   flags the frontend would otherwise have had to combine itself: `status ==
-   "accepted" AND phone_verified`, `onboarding.py:317`.)*
+   flags the frontend would otherwise have had to combine itself.)*
+
+## File ownership as it actually stood (V2)
+
+| Area | Owner | Scope |
+|---|---|---|
+| Shared contracts, config, db, state machine, main, consent/memory/voice services, agents/API routers | **lead** | `specs/**`, `backend/app/config.py`, `db.py`, `main.py`, `domain/**`, `services/**`, `api/**` |
+| Cartesia | **agent A** | `backend/app/adapters/cartesia_adapter.py`, `scripts/discover_cartesia.py`, `scripts/setup_cartesia_agent.py`, `scripts/smoke_call.py`, `backend/tests/test_cartesia_adapter.py`, `prompts/OUTREACH_AGENT.md` |
+| SpacetimeDB | **agent B** | `spacetime/**`, `backend/app/adapters/spacetimedb_adapter.py`, `scripts/stdb_setup.py`, `backend/tests/test_spacetimedb.py` |
+| Fluid conversation | **agent C** | `backend/app/agents/conversation.py`, `backend/app/agents/tools.py`, `backend/app/adapters/anthropic_adapter.py`, `prompts/COMPANION_SYSTEM.md`, `prompts/MEMORY_EXTRACTION.md` |
+| Frontend | **agent D** | `frontend/**` |
+| QA/security | **agent E** | `backend/tests/test_security.py`, `test_negative_paths.py`, `test_concurrency.py`, `scripts/e2e_demo.py`, `scripts/chaos_check.py`, `docs/PRIVACY_SAFETY.md`, `docs/SECURITY.md` |
+| Docs/sponsor | **agent F** (this agent) | `docs/ANTHROPIC_SPONSOR.md`, `MICROSOFT_SPONSOR.md`, `META_SPONSOR.md`, `SPACETIMEDB_SPONSOR.md`, `CARTESIA_SPONSOR.md`, `DEVPOST.md`, `DEMO_RUNBOOK.md`, `IMPLEMENTATION_STATUS.md`, `MULTI_AGENT_ORCHESTRATION.md`, `SPONSOR_MATRIX.md`, `LIVE_PROVIDER_EVIDENCE.md`, `FINAL_HANDOFF.md` |
+
+Note: `specs/CONTRACTS_V2.md §7` originally assigned `docs/CARTESIA_SPONSOR.md`
+to agent A and `docs/SPACETIMEDB_SPONSOR.md` to agent B. Because the killed
+fan-out meant those two files were never written, the lead reassigned both
+to agent F (this agent) as part of the final documentation pass, which is
+why the table above differs from the frozen spec on those two lines — a
+real, intentional deviation, not an error, recorded here so it isn't
+mistaken for drift.
 
 ## Why this is the right lesson, not a failure to plan
 
-The collapse from a six-way split to lead-owned-backend + delegated-frontend/docs
-is the kind of decision the frozen-contract process is supposed to make visible
-early rather than discover through merge conflicts. The contract stayed frozen;
-the *team topology* around it adapted once the actual coupling in the code became
-clear. The five gaps were caught by a frontend agent actually trying to build
-against the contract — which is the contract process working as intended, not
-failing.
+Both phases produced the same finding: a frozen contract makes the seams
+*checkable*, it does not make them *correct by construction*. The five
+Phase-1 gaps were caught by an agent actually trying to build against the
+contract. The three Phase-2 gaps were caught by the lead actually running the
+integrated system after a fan-out was cut short. In both cases the process
+surfaced the problem before a judge would have, which is the contract
+process working as intended.

@@ -1,0 +1,16 @@
+Still Here's initial target is adults in the first 30 days after discharge from inpatient psychiatric care who experience difficulty maintaining human relationships.
+
+  Implement a proactive, permission-based reconnection system—not merely an agent that schedules when someone asks.
+
+  The full desired workflow is: patient opts in → trusted friends individually join → permissioned conversations build memory → authorized calendar connections provide free/busy data → backend independently detects meaningful changes in connection patterns → Claude proposes a socially appropriate activity → Still Here negotiates with opted-in friends first → patient receives one complete, low-pressure invitation → patient approves → backend transactionally confirms everyone's matching terms → real calendar events and authorized bookings are completed.
+
+  Build genuine longitudinal baseline calculations and opportunity detection rather than a hardcoded three-week scenario. A decline or silence must not cause escalating outreach. Keep clinical records separate from relationship coordination.
+
+  Use real Google Calendar OAuth and Microsoft Graph free/busy queries. Check current API documentation and scopes. Implement group planning, including any activity, any number of opted-in participants within configured limits, free-form counterproposals, and changing schedules.
+
+  Make SpacetimeDB authoritative for multi-party coordination, genuine subscriptions, and versioned approvals. Use Claude for memory-grounded reasoning and Cartesia for live calls. Verify that the reasoning and calls are actually wired into the production paths.
+
+  For booking, integrate one real provider only if available. Require explicit approval for costs and transactions; otherwise show an honest unbooked plan with a real reservation link.
+
+  Preserve all existing passing tests, consent protections, and the original judge-answers-the-phone fallback demo. Delegate independent work to parallel agents and report each feature as implemented, externally verified, simulated, or blocked. Prioritize live functionality over extra features.
+ Copy

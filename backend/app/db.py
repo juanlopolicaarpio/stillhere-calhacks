@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS relationships (
   contact_id TEXT NOT NULL REFERENCES users(id),
   relationship_label TEXT NOT NULL,
   status TEXT NOT NULL,
+  last_contact_at TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -229,6 +230,13 @@ def get_conn() -> sqlite3.Connection:
 def init_db() -> None:
     conn = get_conn()
     conn.executescript(SCHEMA)
+    # Additive migrations for databases created by an earlier schema.
+    for table, column, decl in (
+        ("relationships", "last_contact_at", "TEXT"),
+    ):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
     conn.commit()
 
 

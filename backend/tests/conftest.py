@@ -38,6 +38,59 @@ for _secret in (
     os.environ[_secret] = ""
 
 
+#: Coordination tables in SpacetimeDB. Order matters only for readability -
+#: there are no FK constraints to respect.
+_COORD_TABLES = (
+    "plan_confirmations",
+    "participant_responses",
+    "plan_proposals",
+    "consent_state",
+    "call_sessions",
+    "connection_sessions",
+    "agent_events",
+    "demo_presence",
+)
+
+
+def _reset_coordination() -> None:
+    """Clear SpacetimeDB coordination state between tests.
+
+    `wipe_all()` resets SQLite, but the SpacetimeDB module is a PERSISTENT
+    EXTERNAL process that outlives both the test and the session. Leaving its
+    rows in place made the suite non-hermetic: tests passed individually and in
+    their own file, then failed when run together, because a previous test's
+    coordination rows were still visible to the reducers. Clearing both stores
+    is what actually makes a test independent.
+
+    Silent no-op when SpacetimeDB is unreachable, so the suite still runs on a
+    machine without it.
+    """
+    try:
+        from app.adapters import spacetimedb_adapter as stdb
+    except Exception:
+        return
+    try:
+        if not stdb.configured():
+            return
+    except Exception:
+        return
+    # One reducer call, one transaction, one round-trip. The SQL fallback below
+    # costs eight round-trips (~2.4s per test, ~10 min across the suite), so it
+    # runs only against a module that predates the reducer.
+    try:
+        stdb.call_reducer("reset_coordination", [])
+        return
+    except Exception:
+        pass
+    for table in _COORD_TABLES:
+        try:
+            stdb.query_sql(f"DELETE FROM {table}")
+        except Exception:
+            # Unreachable, or the module predates this table. Either way the
+            # test should run rather than error in setup.
+            return
+
+
 @pytest.fixture(autouse=True)
 def fresh_db():
     from app.config import get_settings
@@ -45,6 +98,7 @@ def fresh_db():
     from app.services import demo_reset, events
 
     get_settings.cache_clear()
+    _reset_coordination()
     if _tmp.exists():
         for suffix in ("", "-wal", "-shm"):
             p = Path(str(_tmp) + suffix)

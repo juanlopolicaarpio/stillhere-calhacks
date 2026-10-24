@@ -55,6 +55,21 @@ export function Dashboard() {
   const { events, connected, streamError } = useAgentEvents(token || undefined);
   const { status: statusResp } = useStatus();
 
+  // Adopt the local dev token automatically on first visit. /api/status only
+  // returns `dev_dashboard_token` while the token is still the shipped
+  // default, so this can never silently authenticate a real deployment - it
+  // just stops a fresh clone from showing a 401 until someone types a value
+  // they have no way of guessing.
+  const devToken =
+    (statusResp as { dev_dashboard_token?: string | null } | null)
+      ?.dev_dashboard_token ?? null;
+  useEffect(() => {
+    if (!token && devToken) {
+      setToken(devToken);
+      setTokenInput(devToken);
+    }
+  }, [token, devToken, setToken]);
+
   const [recentEvents, setRecentEvents] = useState<AgentEvent[]>([]);
   const [recentError, setRecentError] = useState<string | null>(null);
 

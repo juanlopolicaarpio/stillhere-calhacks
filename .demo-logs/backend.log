@@ -1,64 +1,10 @@
-INFO:     Started server process [30488]
+INFO:     Started server process [26760]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:49444 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49446 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56749 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56753 - "GET /health HTTP/1.1" 200 OK
 SPACETIMEDB_TOKEN is unset; using local CLI token (dev only) from C:\Users\User\AppData\Local\SpacetimeDB\config\cli.toml. Set SPACETIMEDB_TOKEN explicitly for any non-local deployment.
-INFO:     127.0.0.1:49451 - "GET /api/status HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49459 - "POST /api/demo/reset HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61796 - "GET /health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61799 - "POST /api/demo/reset HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61802 - "POST /api/sim/clock/reset HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61804 - "POST /api/sim/seed-recent HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61812 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61814 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61816 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61820 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61822 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61825 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54333 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54336 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54339 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54341 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54343 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54346 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54197 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54208 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54210 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54213 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54215 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54225 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54227 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54229 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54234 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54236 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54238 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54240 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54243 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54246 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54248 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54251 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54254 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54257 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54259 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54261 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54263 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54267 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54271 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54273 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54275 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54278 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54281 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54283 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54285 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54288 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54290 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54292 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54295 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54298 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54303 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54306 - "POST /api/sim/clock/advance HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54315 - "GET /api/sim/opportunities?patient_id=user_sam HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54318 - "POST /api/sim/tick HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54320 - "GET /api/sim/clock HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56757 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56766 - "GET /api/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56773 - "POST /api/demo/reset HTTP/1.1" 200 OK

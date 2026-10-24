@@ -143,9 +143,19 @@ def status():
     if cs.simulated:
         notes.append(cs.note)
 
+    # Convenience for local demos: if the dashboard token is still the shipped
+    # default, hand it to the UI so the judge dashboard works on first visit
+    # instead of showing a 401 until someone types it. The moment an operator
+    # sets a real token this disappears - a status endpoint must never leak a
+    # credential that actually protects something.
+    dev_token = (
+        s.dashboard_token if s.dashboard_token == "dev-dashboard-token" else None
+    )
+
     return {
         **snapshot,
         "real_call_possible": s.cartesia_call_ready,
+        "dev_dashboard_token": dev_token,
         "simulated_clock": cs.simulated,
         "clock_offset_days": cs.offset_days,
         "simulated_now": cs.simulated_now,

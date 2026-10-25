@@ -162,6 +162,7 @@ export interface StatusResponse {
   twilio_configured?: boolean;
   target_phone_present?: boolean;
   real_call_possible?: boolean;
+  dev_dashboard_token?: string | null;
   notes?: string;
   // CONTRACTS_V2.md additions. Agent B/C are wiring these in parallel, so
   // they must be treated as optional and absent-tolerant everywhere.
@@ -414,6 +415,7 @@ export interface PlanParticipant {
   responded_starts_at: string | null;
   response_at: string | null;
   simulated: boolean;
+  display_name?: string | null;
 }
 
 export interface PlanWithParticipants extends Plan {
@@ -684,4 +686,86 @@ export function getRecentEvents(
 
 export function eventsStreamUrl(): string {
   return '/api/events/stream';
+}
+
+// ---------------------------------------------------------------------------
+// Judge pitch scenario (fictional Josh + three independently consented friends)
+// ---------------------------------------------------------------------------
+
+export interface PitchCall {
+  id: string;
+  contact_id: string;
+  display_name: string;
+  status: string;
+  mode: VoiceMode;
+  purpose: string;
+  requested_at: string;
+  ended_at: string | null;
+}
+
+export interface PitchAvailability {
+  user_id: string;
+  display_name: string;
+  start_at: string;
+  end_at: string;
+  source: string;
+}
+
+export interface PitchStatus {
+  people: Array<{ id: string; display_name: string; role: string }>;
+  plan: PlanWithParticipants | null;
+  calls: PitchCall[];
+  availability: PitchAvailability[];
+  baseline: {
+    current_gap_days: number | null;
+    median_gap_days: number | null;
+    deviation_ratio: number | null;
+    trend: string;
+    events_considered: number;
+    basis: string;
+  } | null;
+  approved_memories: Array<{
+    value: string;
+    source_quote: string;
+    confidence: number;
+    confirmed: number;
+    visibility: string;
+    created_at: string;
+  }>;
+  interaction_history: Array<{ label: string; count: number }>;
+  positioning: string;
+  stats: {
+    recorded_interactions: number;
+    approved_memories: number;
+    availability_windows: number;
+    real_calls: number;
+  };
+}
+
+export function pitchOnboardingCall(): Promise<{ call_id: string; status: string; mode: VoiceMode; duplicate?: boolean }> {
+  return request('POST', '/api/pitch/onboarding-call');
+}
+
+export function pitchReset(): Promise<Record<string, unknown>> {
+  return request('POST', '/api/pitch/reset');
+}
+
+export function pitchStart(forceMode?: VoiceMode): Promise<{ plan_id: string; call_id: string; mode: VoiceMode }> {
+  return request('POST', '/api/pitch/start', forceMode ? { force_mode: forceMode } : {});
+}
+
+export function pitchRehearse(): Promise<{ plan_id: string; state: string; simulated: true }> {
+  return request('POST', '/api/pitch/rehearse');
+}
+
+export function pitchSimulateThreeWeeks(): Promise<Record<string, unknown>> {
+  return request('POST', '/api/pitch/simulate-three-weeks');
+}
+
+export function pitchJoshResponse(planId: string, response: 'accepted' | 'declined'): Promise<Record<string, unknown>> {
+  return request('POST', '/api/pitch/josh-response', { plan_id: planId, response });
+}
+
+export function getPitchStatus(): Promise<PitchStatus> {
+  return request('GET', '/api/pitch/status');
 }

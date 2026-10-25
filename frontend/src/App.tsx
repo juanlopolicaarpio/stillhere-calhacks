@@ -9,6 +9,8 @@ import { ConsentSettings } from './pages/ConsentSettings';
 import { Companion } from './pages/Companion';
 import { Dashboard } from './pages/Dashboard';
 import { SyncProof } from './pages/SyncProof';
+import { JudgeHub } from './pages/JudgeHub';
+import { CallNow } from './pages/CallNow';
 
 function NotFound() {
   return (
@@ -37,6 +39,8 @@ function App() {
           <Route path="/companion" element={<Companion />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/sync-proof" element={<SyncProof />} />
+          <Route path="/pitch-demo" element={<JudgeHub />} />
+          <Route path="/call-now" element={<CallNow />} />
           <Route path="/404" element={<NotFound />} />
           <Route path="*" element={<Navigate to="/404" replace />} />
         </Route>

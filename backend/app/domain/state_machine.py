@@ -47,6 +47,10 @@ TRANSITIONS: dict[PlanState, set[PlanState]] = {
     # A friend may change their mind after saying yes, including while we are
     # waiting on the patient. That is a normal human event, not an error.
     PlanState.FRIEND_ACCEPTED: {
+        # Group plans return here between independently consented calls.  The
+        # next contact can be called only after the previous contact's response
+        # is durably recorded.
+        PlanState.CONTACT_IN_PROGRESS,
         PlanState.PATIENT_APPROVAL_PENDING,
         PlanState.FRIEND_COUNTERPROPOSED,
         PlanState.FRIEND_DECLINED,

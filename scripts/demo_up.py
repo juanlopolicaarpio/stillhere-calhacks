@@ -147,6 +147,15 @@ def main() -> int:
         print(dim(f"    expected at {CLOUDFLARED}"))
     else:
         log = LOGS / "tunnel.log"
+        # Quick tunnels expire. On Windows the old cloudflared process keeps
+        # its redirected log handle open, so unlinking the log before stopping
+        # that process raises WinError 32 and prevents recovery.
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "cloudflared.exe"],
+                capture_output=True,
+            )
+            time.sleep(1)
         if log.exists():
             log.unlink()
         spawn([str(CLOUDFLARED), "tunnel", "--url", "http://localhost:8000",

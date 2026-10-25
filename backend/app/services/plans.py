@@ -92,7 +92,12 @@ def get_plan(plan_id: str) -> dict[str, Any]:
     d["memory_citations"] = json.loads(d.get("memory_citations") or "[]")
     d["participants"] = [
         dict(p) | {"simulated": bool(p["simulated"])}
-        for p in q("SELECT * FROM plan_participants WHERE plan_id=?", (plan_id,))
+        for p in q(
+            "SELECT pp.*, u.display_name FROM plan_participants pp "
+            "LEFT JOIN users u ON u.id=pp.user_id WHERE pp.plan_id=? "
+            "ORDER BY CASE pp.role WHEN 'patient' THEN 0 ELSE 1 END, u.display_name",
+            (plan_id,),
+        )
     ]
     return d
 
@@ -477,7 +482,7 @@ def send_confirmation(plan_id: str, *, session_id: str | None = None) -> dict[st
         + message,
         plan_id=plan_id,
         session_id=session_id,
-        payload={"message": message, "recipients": 2, "channel": "sms"},
+        payload={"message": message, "recipients": len(plan["participants"]), "channel": "sms"},
         simulated=simulated,
     )
     set_state(plan_id, PlanState.COMPLETE, reason="workflow complete", session_id=session_id)

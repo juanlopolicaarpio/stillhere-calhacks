@@ -1,5 +1,14 @@
 # Handoff prompt — register Still Here's webhook tools in Cartesia
 
+> **Legacy, narrow-scope handoff — do not use this file to configure the
+> full-lifecycle agent.** These five tools support an already-created reunion
+> plan plus basic inbound caller identification. They cannot onboard a patient,
+> select contacts, send or accept an invitation, record a patient's decision,
+> revoke voice consent, or maintain longitudinal memory. The reviewed,
+> not-yet-deployed replacement prompt and the required backend/tool work are in
+> [CARTESIA_LIFECYCLE_AGENT_REVIEW.md](CARTESIA_LIFECYCLE_AGENT_REVIEW.md).
+> Nothing in that proposal has been applied to the live Cartesia agent.
+
 Give everything below to an AI that has access to the Cartesia account (or
 browser access to play.cartesia.ai). It contains every value needed. Copy from
 `--- BEGIN PROMPT ---` to `--- END PROMPT ---`.

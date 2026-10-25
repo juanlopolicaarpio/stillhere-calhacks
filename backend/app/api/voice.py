@@ -101,6 +101,8 @@ def tool_get_support_context(
 
     ctx = memory.shareable_context(plan["patient_id"], call["contact_id"], [])
     out = {
+        "verified_call_purpose": call["purpose"],
+        "authorized_context": json.loads(call["authorized_context"] or "{}"),
         "contact_first_name": contact["display_name"].split()[0] if contact else "there",
         "shared_interests": ctx["shared_interests"],
         "relationship": ctx["relationship"],
@@ -182,8 +184,22 @@ def tool_record_friend_response(
     if body.response == "accepted":
         plans.set_state(plan_id, PlanState.FRIEND_ACCEPTED,
                         reason="contact accepted on the call", session_id=call["session_id"])
-        plans.set_state(plan_id, PlanState.PATIENT_APPROVAL_PENDING,
-                        reason="awaiting patient approval", session_id=call["session_id"])
+        refreshed = plans.get_plan(plan_id)
+        waiting = [
+            p for p in refreshed["participants"]
+            if p["role"] == "contact" and p["response"] != "accepted"
+        ]
+        if not waiting:
+            plans.set_state(plan_id, PlanState.PATIENT_APPROVAL_PENDING,
+                            reason="all contacts accepted; awaiting patient approval",
+                            session_id=call["session_id"])
+        else:
+            events.emit(
+                "coordination.next_contact_pending",
+                f"{len(waiting)} independently consented contact(s) still need a response",
+                plan_id=plan_id, call_id=call["id"], session_id=call["session_id"],
+                payload={"remaining_contact_ids": [p["user_id"] for p in waiting]},
+            )
     elif body.response == "declined":
         plans.set_state(plan_id, PlanState.FRIEND_DECLINED,
                         reason="contact declined", session_id=call["session_id"])
@@ -221,15 +237,35 @@ def tool_request_patient_approval(
     call = _call_or_404(body.call_id)
     plan = plans.get_plan(call["plan_id"])
 
+    waiting = [
+        p for p in plan["participants"]
+        if p["role"] == "contact" and p["response"] != "accepted"
+    ]
+    if waiting:
+        _log_tool(
+            call, "request_patient_approval", "blocked",
+            int((time.monotonic() - t0) * 1000),
+            f"{len(waiting)} contact response(s) still missing", {},
+        )
+        return {
+            "plan_id": plan["id"],
+            "state": plan["status"],
+            "approval_requested": False,
+            "remaining_contacts": len(waiting),
+        }
+
+    patient = q1("SELECT display_name FROM users WHERE id=?", (plan["patient_id"],))
+    patient_first = (patient["display_name"].split()[0] if patient else "the patient")
+
     events.emit(
         "patient.approval_requested",
-        "Patient approval requested; nothing is confirmed until Sam agrees",
+        f"Patient approval requested; nothing is confirmed until {patient_first} agrees",
         plan_id=plan["id"], call_id=call["id"], session_id=call["session_id"],
         payload={"activity": plan["activity"], "starts_at": plan["starts_at"]},
     )
     _log_tool(call, "request_patient_approval", "ok",
               int((time.monotonic() - t0) * 1000), "approval pending", {})
-    return {"plan_id": plan["id"], "state": plan["status"]}
+    return {"plan_id": plan["id"], "state": plan["status"], "approval_requested": True}
 
 
 # --------------------------------------------------------------------------
@@ -237,20 +273,37 @@ def tool_request_patient_approval(
 # --------------------------------------------------------------------------
 @router.post("/webhook")
 async def provider_webhook(
-    request: Request, x_stillhere_secret: str | None = Header(default=None)
+    request: Request,
+    x_stillhere_secret: str | None = Header(default=None),
+    x_webhook_secret: str | None = Header(default=None),
 ):
     """Cartesia call lifecycle events.
 
     Maps provider status onto our call row and emits real, timestamped events.
     Unknown or duplicate statuses are recorded but never crash the call.
     """
-    _auth(x_stillhere_secret)
+    # Cartesia's event webhook sends X-Webhook-Secret; tools send X-StillHere-Secret.
+    _auth(x_webhook_secret or x_stillhere_secret)
     body = await request.json()
 
     provider_call_id = (
         body.get("agent_call_id") or body.get("call_id") or body.get("id") or ""
     )
-    status = str(body.get("status") or body.get("event") or "unknown").lower()
+    event_name = str(body.get("type") or body.get("event") or "").lower()
+    nested_call = body.get("call") if isinstance(body.get("call"), dict) else {}
+    # Current Managed Agent webhooks use call_started/call_completed/call_failed
+    # at the envelope level and put the provider status inside `call.status`.
+    # Older deliveries used a top-level status, so keep both formats.
+    status = str(
+        body.get("status")
+        or nested_call.get("status")
+        or {
+            "call_started": "started",
+            "call_completed": "completed",
+            "call_failed": "failed",
+        }.get(event_name)
+        or "unknown"
+    ).lower()
 
     call = q1("SELECT * FROM calls WHERE provider_call_id=?", (provider_call_id,))
     if call is None:
@@ -263,6 +316,7 @@ async def provider_webhook(
 
     mapping = {
         "ringing": ("call.ringing", "ringing"),
+        "started": ("call.answered", "answered"),
         "in_progress": ("call.answered", "answered"),
         "answered": ("call.answered", "answered"),
         "completed": ("call.ended", "completed"),
@@ -272,7 +326,12 @@ async def provider_webhook(
         "busy": ("call.ended", "busy"),
         "voicemail": ("call.ended", "voicemail"),
     }
-    event_type, new_status = mapping.get(status, ("call.turn", call["status"]))
+    if event_name == "call_turn":
+        event_type, new_status = "call.turn", call["status"]
+    elif event_name == "post_call_analysis":
+        event_type, new_status = "call.analysis", call["status"]
+    else:
+        event_type, new_status = mapping.get(status, ("call.turn", call["status"]))
 
     if new_status == "answered" and not call["answered_at"]:
         ex("UPDATE calls SET status=?, answered_at=? WHERE id=?",
@@ -299,6 +358,14 @@ async def provider_webhook(
             plan_id=call["plan_id"], call_id=call["id"],
             payload={"status": new_status},
         )
+
+    # A group sequence advances only on a completed call whose bound contact
+    # explicitly accepted through the authenticated tool.  All safety gates
+    # are re-run by start_outbound_call for the next person.
+    if new_status == "completed" and call["purpose"] == "friend_reunion_coordination":
+        from ..services import group_coordination
+
+        group_coordination.start_next_after_completed_call(call["id"])
 
     return {"ok": True, "matched": True, "status": new_status}
 

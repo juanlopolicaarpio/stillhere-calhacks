@@ -21,6 +21,12 @@ class TestHealthAndStatus:
         for bad in ("sk_", "sk-ant", "bearer ", "auth_token"):
             assert bad not in blob
 
+    def test_public_signup_route_serves_the_spa_for_qr_scans(self, client):
+        r = client.get("/signup")
+        assert r.status_code == 200
+        assert "Still Here" in r.text
+        assert "text/html" in r.headers["content-type"]
+
 
 class TestOnboarding:
     def test_signup_requires_adult_attestation(self, client):
@@ -279,6 +285,36 @@ class TestVoiceTools:
                         json={"agent_call_id": "prov_1", "status": "no_answer"},
                         headers=tool_headers).json()
         assert r["status"] == "no_answer"
+
+    def test_webhook_maps_current_cartesia_event_envelope(self, client):
+        from app.db import ex, q1
+
+        s = self._start(client)
+        ex("UPDATE calls SET provider_call_id='prov_current' WHERE id=?", (s["call_id"],))
+        headers = {"X-Webhook-Secret": "test-secret"}
+        started = client.post(
+            "/api/voice/webhook",
+            json={
+                "type": "call_started",
+                "call_id": "prov_current",
+                "call": {"id": "prov_current", "status": "started"},
+            },
+            headers=headers,
+        ).json()
+        assert started["status"] == "answered"
+        assert q1("SELECT status FROM calls WHERE id=?", (s["call_id"],))["status"] == "answered"
+
+        completed = client.post(
+            "/api/voice/webhook",
+            json={
+                "type": "call_completed",
+                "call_id": "prov_current",
+                "call": {"id": "prov_current", "status": "completed"},
+            },
+            headers=headers,
+        ).json()
+        assert completed["status"] == "completed"
+        assert q1("SELECT status FROM calls WHERE id=?", (s["call_id"],))["status"] == "completed"
 
 
 class TestDemoFlowApi:

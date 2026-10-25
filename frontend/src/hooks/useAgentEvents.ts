@@ -33,6 +33,10 @@ export function useAgentEvents(dashboardToken?: string): UseAgentEventsResult {
     setConnected(false);
     setStreamError(null);
 
+    // The backend protects this feed.  Waiting for the status endpoint to
+    // provide the local demo token avoids a guaranteed 401 on first render.
+    if (!dashboardToken) return;
+
     let url = eventsStreamUrl();
     if (dashboardToken) {
       url += `?dashboard_token=${encodeURIComponent(dashboardToken)}`;
@@ -46,7 +50,7 @@ export function useAgentEvents(dashboardToken?: string): UseAgentEventsResult {
       setStreamError(null);
     };
 
-    source.onmessage = (ev: MessageEvent<string>) => {
+    const receive = (ev: MessageEvent<string>) => {
       if (!ev.data) return;
       try {
         const parsed = JSON.parse(ev.data) as AgentEvent;
@@ -61,6 +65,10 @@ export function useAgentEvents(dashboardToken?: string): UseAgentEventsResult {
         setStreamError('Received a malformed event frame from the server.');
       }
     };
+    // sse-starlette sends these as a named event, so `onmessage` alone never
+    // receives them. Keep onmessage as a compatibility fallback.
+    source.addEventListener('agent_event', receive as EventListener);
+    source.onmessage = receive;
 
     source.onerror = () => {
       setConnected(false);
@@ -68,6 +76,7 @@ export function useAgentEvents(dashboardToken?: string): UseAgentEventsResult {
     };
 
     return () => {
+      source.removeEventListener('agent_event', receive as EventListener);
       source.close();
       sourceRef.current = null;
     };

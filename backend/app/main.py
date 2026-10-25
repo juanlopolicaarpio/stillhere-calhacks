@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .db import init_db, q1
@@ -171,6 +173,7 @@ from .api import inbound as inbound_api  # noqa: E402
 from .api import simulate as simulate_api  # noqa: E402
 from .api import onboarding as onboarding_api  # noqa: E402
 from .api import voice as voice_api  # noqa: E402
+from .api import pitch as pitch_api  # noqa: E402
 
 app.include_router(onboarding_api.router)
 app.include_router(calendar_api.router)
@@ -180,3 +183,35 @@ app.include_router(events_api.router)
 app.include_router(inbound_api.router)
 app.include_router(simulate_api.router)
 app.include_router(voice_api.router)
+app.include_router(pitch_api.router)
+
+
+# Serve the production React build from the same public origin as the API.
+# Cloudflare points at port 8000, so without this the QR's /signup URL reached
+# FastAPI and returned 404 even though the page existed on Vite's local port.
+# API routes are registered first and therefore retain precedence.
+_frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if (_frontend_dist / "index.html").exists():
+    _assets = _frontend_dist / "assets"
+    if _assets.exists():
+        app.mount("/assets", StaticFiles(directory=_assets), name="frontend-assets")
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    def frontend_spa(spa_path: str = ""):
+        """Serve real build files, otherwise let React Router handle the path."""
+        candidate = (_frontend_dist / spa_path).resolve()
+        try:
+            candidate.relative_to(_frontend_dist.resolve())
+        except ValueError:
+            candidate = _frontend_dist / "index.html"
+        if candidate.is_file():
+            headers = {"Cache-Control": "no-store"} if candidate.name == "index.html" else None
+            return FileResponse(candidate, headers=headers)
+        # Never cache the SPA shell: production builds use hashed JS names and
+        # a cached shell can otherwise request a bundle removed by a rebuild,
+        # surfacing to users as a misleading "Failed to fetch" error.
+        return FileResponse(
+            _frontend_dist / "index.html",
+            headers={"Cache-Control": "no-store"},
+        )

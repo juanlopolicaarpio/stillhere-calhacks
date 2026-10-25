@@ -213,7 +213,9 @@ CREATE TABLE IF NOT EXISTS calls (
   answered_at TEXT,
   ended_at TEXT,
   error TEXT,
-  raw_provider_response TEXT
+  raw_provider_response TEXT,
+  purpose TEXT NOT NULL DEFAULT 'friend_reunion_outreach',
+  authorized_context TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS agent_events (
@@ -292,6 +294,11 @@ def init_db() -> None:
         # Without this, unanswered-call suppression in services/opportunity.py
         # could only match on contact_id and over-suppressed across patients.
         ("calls", "patient_id", "TEXT"),
+        # The provider receives only backend-verified intent and context.  These
+        # fields make the purpose auditable and stop a general-purpose voice
+        # agent from inventing why it is calling.
+        ("calls", "purpose", "TEXT NOT NULL DEFAULT 'friend_reunion_outreach'"),
+        ("calls", "authorized_context", "TEXT NOT NULL DEFAULT '{}'"),
     ):
         cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:

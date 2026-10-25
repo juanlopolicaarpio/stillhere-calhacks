@@ -159,6 +159,7 @@ def start_outbound_call(
     idempotency_key: str,
     force_mode: str | None = None,
     override_quiet_hours: bool = False,
+    purpose: str = "friend_reunion_outreach",
 ) -> dict[str, Any]:
     s = get_settings()
 
@@ -228,6 +229,9 @@ def start_outbound_call(
     patient_first = (patient["display_name"] if patient else "your friend").split()[0]
 
     dynamic_variables = {
+        # This value is selected and persisted by the backend, never inferred
+        # by the voice model.  The reviewed lifecycle prompt can branch on it.
+        "verified_call_purpose": purpose,
         "contact_first_name": contact_first,
         "patient_first_name": patient_first,
         "proposed_activity": plan["activity"],
@@ -260,14 +264,25 @@ def start_outbound_call(
     mode = force_mode or s.voice_mode()
     call_id = new_id("call")
 
+    authorized_context = {
+        "purpose": purpose,
+        "patient_id": patient_id,
+        "contact_id": contact_id,
+        "plan_id": plan_id,
+        "allowed_fields": decision.scope.get("allowed_fields", []),
+        "allowed_actions": decision.scope.get("allowed_actions", []),
+        "memory_citations": [c["memory_id"] for c in ctx["citations"]],
+    }
+
     ex(
         "INSERT INTO calls (id, plan_id, patient_id, contact_id, session_id, provider,"
-        " to_number_redacted, status, mode, idempotency_key, requested_at)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        " to_number_redacted, status, mode, idempotency_key, requested_at, purpose,"
+        " authorized_context) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             call_id, plan_id, patient_id, contact_id, session_id,
             "cartesia" if mode == "cartesia_pstn" else "simulated",
             _redact(to_number), "requested", mode, idempotency_key, now_iso(),
+            purpose, json.dumps(authorized_context),
         ),
     )
     consent_svc.record_outreach(patient_id, contact_id, "voice_call")
@@ -284,6 +299,7 @@ def start_outbound_call(
             "to_number": to_number,  # redacted by events.redact()
             "memory_citations": [c["memory_id"] for c in ctx["citations"]],
             "withheld_memories": ctx["blocked_count"],
+            "verified_call_purpose": purpose,
         },
         simulated=(mode != "cartesia_pstn"),
     )

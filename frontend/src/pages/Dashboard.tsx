@@ -55,19 +55,15 @@ export function Dashboard() {
   const { events, connected, streamError } = useAgentEvents(token || undefined);
   const { status: statusResp } = useStatus();
 
-  // Adopt the local dev token automatically on first visit. /api/status only
+  // Adopt the local dev token automatically. /api/status only
   // returns `dev_dashboard_token` while the token is still the shipped
   // default, so this can never silently authenticate a real deployment - it
-  // just stops a fresh clone from showing a 401 until someone types a value
-  // they have no way of guessing.
+  // also repairs stale or mistyped localStorage values from earlier demo runs.
   const devToken =
     (statusResp as { dev_dashboard_token?: string | null } | null)
       ?.dev_dashboard_token ?? null;
   useEffect(() => {
-    // `!token` also covers a previously-saved EMPTY string, which localStorage
-    // stores as a real value and which otherwise reads as "already chosen" -
-    // that is what left the dashboard stuck on 401 after the first fix.
-    if (devToken && (!token || token.trim() === '')) {
+    if (devToken && token !== devToken) {
       setToken(devToken);
       setTokenInput(devToken);
     }
@@ -119,6 +115,22 @@ export function Dashboard() {
     for (const e of events) byId.set(e.id, e);
     return Array.from(byId.values()).sort((a, b) => a.seq - b.seq);
   }, [recentEvents, events]);
+
+  // A demo can be started by the operator script or a real webhook rather than
+  // this browser. In that case localStorage has no ids, but the authenticated
+  // event stream does. Follow the latest real session automatically so the
+  // dashboard never sits on "No plan started" while work is already visible.
+  useEffect(() => {
+    if (!allEvents.length) return;
+    if (!planId) {
+      const latestPlan = [...allEvents].reverse().find((e) => e.plan_id)?.plan_id;
+      if (latestPlan) setPlanId(latestPlan);
+    }
+    if (!callId) {
+      const latestCall = [...allEvents].reverse().find((e) => e.call_id)?.call_id;
+      if (latestCall) setCallId(latestCall);
+    }
+  }, [allEvents, planId, callId, setPlanId, setCallId]);
 
   async function refreshPlan(id: string) {
     if (!dashOpts) return;
